@@ -221,6 +221,30 @@ class SoundEngine {
     osc.stop(now + 0.08);
   }
 
+  // シートクリア時の爽快な上昇アルペジオ和音
+  playStageClear() {
+    if (!this.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.51];
+
+    notes.forEach((freq, i) => {
+      const t = now + i * 0.055;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = i === notes.length - 1 ? "sine" : "triangle";
+      osc.frequency.setValueAtTime(freq, t);
+
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(0.16, t + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.34);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.36);
+    });
+  }
+
   // 自爆（ゲームオーバー）時の破裂音
   playBurst() {
     if (!this.enabled || !this.ctx) return;

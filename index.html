@@ -8,9 +8,13 @@
 </head>
 <body>
   <div class="app">
-    <!-- 上部HUD：最小限の情報のみ -->
+    <!-- 上部HUD：ステージ・スコア・記録を最小限で配置 -->
     <header class="hud">
       <div class="stat-group">
+        <div class="stat">
+          <span class="stat-label">STAGE</span>
+          <span class="stat-value accent" id="stageValue">1</span>
+        </div>
         <div class="stat">
           <span class="stat-label">SCORE</span>
           <span class="stat-value" id="scoreValue">0</span>
@@ -18,10 +22,6 @@
         <div class="stat">
           <span class="stat-label">BEST</span>
           <span class="stat-value muted" id="bestValue">0</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">MAX CHAIN</span>
-          <span class="stat-value muted" id="maxChainValue">0</span>
         </div>
       </div>
 
@@ -40,22 +40,40 @@
 
     <!-- メインの盤面エリア -->
     <main class="stage-wrap">
+      <!-- シート名と残り進捗バー（極細で視界を邪魔しない） -->
+      <div class="sheet-bar">
+        <div class="sheet-meta">
+          <span class="sheet-name" id="sheetName">STAGE 1 · MINI SHEET</span>
+          <span class="sheet-remain" id="sheetRemain">0 / 16</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+
       <div class="canvas-container" id="canvasContainer">
         <canvas id="gameCanvas"></canvas>
+
+        <!-- ステージクリア時の軽快なバナーと丸く広がるワイプ演出 -->
+        <div class="stage-banner hidden" id="stageBanner" aria-live="polite">
+          <div class="stage-banner-sub" id="stageBannerSub">SHEET CLEAR</div>
+          <div class="stage-banner-title" id="stageBannerTitle">STAGE 2</div>
+        </div>
+        <div class="sheet-wipe" id="sheetWipe"></div>
 
         <!-- ゲームオーバー時の最小オーバーレイ（盤面のどこを押しても即リトライ） -->
         <div class="overlay hidden" id="gameOverOverlay">
           <div class="overlay-card">
             <div class="overlay-title">BURST</div>
             <div class="overlay-score" id="finalScore">0</div>
-            <div class="overlay-sub" id="finalMeta">MAX CHAIN 0 / NEW BEST</div>
-            <button class="retry-btn" id="retryBtn" type="button">もう一回（クリック / Space）</button>
+            <div class="overlay-sub" id="finalMeta">STAGE 1 / MAX CHAIN 0</div>
+            <button class="retry-btn" id="retryBtn" type="button">もう一回（タップ / Space）</button>
           </div>
         </div>
       </div>
 
       <!-- 状態を示す極小の一行メッセージ（開始前のみ表示、開始後は非表示） -->
-      <p class="hint" id="hintText">小さい泡を押して離すと空気が隣へ逃げる（ずらすとキャンセル）。パンパンの泡を連鎖で潰そう。</p>
+      <p class="hint" id="hintText">色つきマスをすべて連鎖で破ると次のシートへ。小さい泡は押して離すと隣へ空気が逃げる。</p>
     </main>
 
     <!-- ステップ4検証用：パラメータ調整パネル（デフォルト非表示） -->
