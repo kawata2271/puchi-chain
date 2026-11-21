@@ -8,20 +8,20 @@
 </head>
 <body>
   <div class="app">
-    <!-- 上部HUD：ステージ・スコア・記録を最小限で配置 -->
+    <!-- 上部HUD：到達深度・最高深度・スコアを最小限で配置 -->
     <header class="hud">
       <div class="stat-group">
         <div class="stat">
-          <span class="stat-label">STAGE</span>
-          <span class="stat-value accent" id="stageValue">1</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">SCORE</span>
-          <span class="stat-value" id="scoreValue">0</span>
+          <span class="stat-label">DEPTH</span>
+          <span class="stat-value accent" id="depthValue">0m</span>
         </div>
         <div class="stat">
           <span class="stat-label">BEST</span>
-          <span class="stat-value muted" id="bestValue">0</span>
+          <span class="stat-value muted" id="bestDepthValue">0m</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">SCORE</span>
+          <span class="stat-value muted" id="scoreValue">0</span>
         </div>
       </div>
 
@@ -38,13 +38,13 @@
       </div>
     </header>
 
-    <!-- メインの盤面エリア -->
+    <!-- メインの縦長掘削エリア -->
     <main class="stage-wrap">
-      <!-- シート名と残り進捗バー（極細で視界を邪魔しない） -->
-      <div class="sheet-bar">
-        <div class="sheet-meta">
-          <span class="sheet-name" id="sheetName">STAGE 1 · MINI SHEET</span>
-          <span class="sheet-remain" id="sheetRemain">0 / 16</span>
+      <!-- 現在の地層名と次の地層までの進捗バー -->
+      <div class="layer-bar">
+        <div class="layer-meta">
+          <span class="layer-name" id="layerName">LAYER 1 · SURFACE</span>
+          <span class="layer-next" id="layerNext">NEXT 30m</span>
         </div>
         <div class="progress-track">
           <div class="progress-fill" id="progressFill"></div>
@@ -54,26 +54,25 @@
       <div class="canvas-container" id="canvasContainer">
         <canvas id="gameCanvas"></canvas>
 
-        <!-- ステージクリア時の軽快なバナーと丸く広がるワイプ演出 -->
-        <div class="stage-banner hidden" id="stageBanner" aria-live="polite">
-          <div class="stage-banner-sub" id="stageBannerSub">SHEET CLEAR</div>
-          <div class="stage-banner-title" id="stageBannerTitle">STAGE 2</div>
+        <!-- 新しい地層へ突入したときのスプリングバナー -->
+        <div class="layer-banner hidden" id="layerBanner" aria-live="polite">
+          <div class="layer-banner-sub" id="layerBannerSub">DEPTH 30m</div>
+          <div class="layer-banner-title" id="layerBannerTitle">EMERALD CANYON</div>
         </div>
-        <div class="sheet-wipe" id="sheetWipe"></div>
 
-        <!-- ゲームオーバー時の最小オーバーレイ（盤面のどこを押しても即リトライ） -->
+        <!-- ゲームオーバー時の最小オーバーレイ（丸く広がる切り替え） -->
         <div class="overlay hidden" id="gameOverOverlay">
           <div class="overlay-card">
-            <div class="overlay-title">BURST</div>
-            <div class="overlay-score" id="finalScore">0</div>
-            <div class="overlay-sub" id="finalMeta">STAGE 1 / MAX CHAIN 0</div>
+            <div class="overlay-title" id="gameOverReason">CRUSHED</div>
+            <div class="overlay-score" id="finalDepth">0m</div>
+            <div class="overlay-sub" id="finalMeta">SCORE 0 / MAX CHAIN 0</div>
             <button class="retry-btn" id="retryBtn" type="button">もう一回（タップ / Space）</button>
           </div>
         </div>
       </div>
 
-      <!-- 状態を示す極小の一行メッセージ（開始前のみ表示、開始後は非表示） -->
-      <p class="hint" id="hintText">色つきマスをすべて連鎖で破ると次のシートへ。小さい泡は押して離すと隣へ空気が逃げる。</p>
+      <!-- 開始前のみ表示する一行ガイド -->
+      <p class="hint" id="hintText">小さい泡を押して離すと隣が膨らむ。連鎖で穴を空けて光るコアを落とし、上の赤ラインから逃げろ。</p>
     </main>
 
     <!-- ステップ4検証用：パラメータ調整パネル（デフォルト非表示） -->
@@ -86,42 +85,42 @@
       <div class="tuning-grid">
         <label class="param-row">
           <div class="param-head">
-            <span>膨張スピード</span>
-            <output id="speedOut">1.00x</output>
+            <span>迫るプレスの速さ</span>
+            <output id="pressOut">1.00x</output>
           </div>
-          <input type="range" id="speedRange" min="0.5" max="2.0" step="0.05" value="1.0" />
+          <input type="range" id="pressRange" min="0.5" max="2.0" step="0.05" value="1.0" />
         </label>
 
         <label class="param-row">
           <div class="param-head">
-            <span>空気の押し出し量（隣へ逃げる空気）</span>
+            <span>空気の押し出し量（隣を膨らませる力）</span>
             <output id="transferOut">1.25x</output>
           </div>
-          <input type="range" id="transferRange" min="0.5" max="2.0" step="0.05" value="1.25" />
+          <input type="range" id="transferRange" min="0.6" max="2.0" step="0.05" value="1.25" />
         </label>
 
         <label class="param-row">
           <div class="param-head">
-            <span>臨界ライン（連鎖可能になる膨らみ）</span>
+            <span>臨界ライン（白く光って連鎖可能になる膨らみ）</span>
             <output id="thresholdOut">68%</output>
           </div>
-          <input type="range" id="thresholdRange" min="50" max="82" step="2" value="68" />
+          <input type="range" id="thresholdRange" min="52" max="82" step="2" value="68" />
         </label>
 
         <label class="param-row">
           <div class="param-head">
-            <span>自爆までの猶予時間</span>
-            <output id="dangerOut">2.6s</output>
+            <span>赤泡が自爆するまでの猶予時間</span>
+            <output id="dangerOut">2.0s</output>
           </div>
-          <input type="range" id="dangerRange" min="1.4" max="4.0" step="0.1" value="2.6" />
+          <input type="range" id="dangerRange" min="1.0" max="3.5" step="0.1" value="2.0" />
         </label>
 
         <label class="param-row">
           <div class="param-head">
             <span>連鎖の伝播間隔</span>
-            <output id="delayOut">55ms</output>
+            <output id="delayOut">50ms</output>
           </div>
-          <input type="range" id="delayRange" min="20" max="110" step="5" value="55" />
+          <input type="range" id="delayRange" min="20" max="100" step="5" value="50" />
         </label>
       </div>
     </aside>

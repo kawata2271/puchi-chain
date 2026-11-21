@@ -221,6 +221,48 @@ class SoundEngine {
     osc.stop(now + 0.08);
   }
 
+  // 硬い殻の泡を直接叩いて弾かれたときの金属的な「カンッ」音
+  playArmorClink() {
+    if (!this.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(680, now);
+    osc.frequency.exponentialRampToValueAtTime(520, now + 0.055);
+
+    gain.gain.setValueAtTime(0.11, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.065);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.07);
+  }
+
+  // 爆風で硬い殻の泡が砕け散ったときの「パリンッ」音
+  playArmorBreak() {
+    if (!this.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    const freqs = [1180, 1680];
+    for (const f of freqs) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(f, now);
+      osc.frequency.exponentialRampToValueAtTime(f * 0.65, now + 0.08);
+      gain.gain.setValueAtTime(0.09, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.095);
+    }
+    this._playNoiseBurst(now, 3600, "highpass", 1.2, 0.16, 0.045);
+  }
+
   // シートクリア時の爽快な上昇アルペジオ和音
   playStageClear() {
     if (!this.enabled || !this.ctx) return;

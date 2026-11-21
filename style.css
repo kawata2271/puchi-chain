@@ -1,26 +1,26 @@
-/* 全体のカラー変数（ステージごとにJSからテーマ色が滑らかに切り替わる） */
+/* 全体のカラー変数（地層ごとにJSから滑らかに切り替わる） */
 :root {
-  --bg: #0f141c;
-  --surface: #171f2b;
-  --surface-border: #283549;
+  --bg: #0c131c;
+  --surface: #121c29;
+  --surface-border: #22344b;
   --theme-accent: #53d8fb;
   --text: #eef2f7;
-  --text-muted: #8b98ad;
+  --text-muted: #8a99b0;
   --accent: #ffffff;
   --danger: #ff4d5a;
   --btn-bg: rgba(255, 255, 255, 0.06);
-  --btn-hover: rgba(255, 255, 255, 0.12);
+  --btn-hover: rgba(255, 255, 255, 0.13);
   --btn-active-bg: #eef2f7;
   --btn-active-text: #121419;
-  --overlay-bg: rgba(10, 13, 18, 0.8);
+  --overlay-bg: rgba(9, 12, 18, 0.8);
 }
 
-/* ステップ3検証用：灰色プロトタイプモード（装飾と色彩を削ぎ落とす） */
+/* ステップ3検証用：灰色プロトタイプモード */
 body.proto-mode {
   --bg: #efefef !important;
-  --surface: #e0e0e0 !important;
+  --surface: #e2e2e2 !important;
   --surface-border: #b8b8b8 !important;
-  --theme-accent: #444444 !important;
+  --theme-accent: #333333 !important;
   --text: #222222;
   --text-muted: #666666;
   --accent: #222222;
@@ -48,17 +48,17 @@ body {
   user-select: none;
   -webkit-user-select: none;
   overflow-x: hidden;
-  transition: background-color 0.55s ease, color 0.25s ease;
+  transition: background-color 0.7s ease, color 0.25s ease;
 }
 
 .app {
-  min-height: 100%;
-  max-width: 560px;
+  min-height: 100dvh;
+  max-width: 460px;
   margin: 0 auto;
-  padding: 16px 16px 26px;
+  padding: 12px 12px 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 /* 上部HUD */
@@ -66,14 +66,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .stat-group {
   display: flex;
   align-items: baseline;
-  gap: 18px;
+  gap: 16px;
 }
 
 .stat {
@@ -83,15 +83,15 @@ body {
 }
 
 .stat-label {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.12em;
   color: var(--text-muted);
 }
 
 .stat-value {
-  font-size: 27px;
-  font-weight: 800;
+  font-size: 24px;
+  font-weight: 900;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   display: inline-block;
@@ -100,16 +100,22 @@ body {
 
 .stat-value.accent {
   color: var(--theme-accent);
-  transition: color 0.45s ease;
+  transition: color 0.6s ease;
 }
 
-/* スコア・ステージ更新時のスプリング弾み（行きすぎて戻るごほうび動き） */
+.stat-value.muted {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+/* スコア・深度マイルストーン更新時のスプリング弾み */
 @keyframes springBump {
   0% {
     transform: scale(1);
   }
   38% {
-    transform: scale(1.25);
+    transform: scale(1.24);
   }
   72% {
     transform: scale(0.95);
@@ -127,16 +133,10 @@ body.proto-mode .stat-value.bump {
   animation: none;
 }
 
-.stat-value.muted {
-  font-size: 19px;
-  font-weight: 700;
-  color: var(--text-muted);
-}
-
 .controls {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .icon-btn {
@@ -144,12 +144,12 @@ body.proto-mode .stat-value.bump {
   border: 1px solid var(--surface-border);
   background: var(--btn-bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: 5px 8px;
+  border-radius: 7px;
   cursor: pointer;
-  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.25s ease;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.3s ease;
 }
 
 .icon-btn:hover {
@@ -162,39 +162,37 @@ body.proto-mode .stat-value.bump {
   border-color: var(--btn-active-bg);
 }
 
-/* 盤面エリア */
+/* 縦長掘削ステージ */
 .stage-wrap {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   flex: 1;
 }
 
-/* シート名＆クリア進捗バー */
-.sheet-bar {
+.layer-bar {
   width: 100%;
-  max-width: 520px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
-.sheet-meta {
+.layer-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10.5px;
+  font-weight: 800;
   letter-spacing: 0.1em;
 }
 
-.sheet-name {
+.layer-name {
   color: var(--theme-accent);
-  transition: color 0.45s ease;
+  transition: color 0.6s ease;
 }
 
-.sheet-remain {
+.layer-next {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -217,7 +215,7 @@ body.proto-mode .progress-track {
   width: 0%;
   background: var(--theme-accent);
   border-radius: 999px;
-  transition: width 0.26s cubic-bezier(0.34, 1.4, 0.64, 1), background-color 0.45s ease;
+  transition: width 0.2s ease, background-color 0.6s ease;
 }
 
 body.proto-mode .progress-fill {
@@ -225,19 +223,20 @@ body.proto-mode .progress-fill {
   transition: none;
 }
 
+/* 枠の閉塞感をなくした縦長ビューポート */
 .canvas-container {
   position: relative;
   width: 100%;
-  max-width: 520px;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 360 / 560;
+  max-height: calc(100dvh - 135px);
+  max-width: calc((100dvh - 135px) * 360 / 560);
   background: var(--surface);
   border: 1px solid var(--surface-border);
   border-radius: 18px;
   overflow: hidden;
-  /* スマホで指をスライドしてキャンセルするときに画面スクロールしないようにする */
   touch-action: none;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.3);
-  transition: background-color 0.5s ease, border-color 0.5s ease;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.36);
+  transition: background-color 0.7s ease, border-color 0.7s ease;
 }
 
 body.proto-mode .canvas-container {
@@ -255,11 +254,11 @@ body.proto-mode .canvas-container {
 }
 
 .hint {
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--text-muted);
   text-align: center;
-  min-height: 20px;
-  line-height: 1.5;
+  line-height: 1.45;
+  min-height: 18px;
   transition: opacity 0.25s ease;
 }
 
@@ -268,79 +267,51 @@ body.proto-mode .canvas-container {
   pointer-events: none;
 }
 
-/* ステージクリア時の軽快なスプリングバナー */
-.stage-banner {
+/* 地層突破時のスプリングバナー（操作を一切邪魔しない） */
+.layer-banner {
   position: absolute;
-  inset: 0;
+  top: 20%;
+  left: 0;
+  right: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  gap: 2px;
   pointer-events: none;
   z-index: 4;
   opacity: 1;
-  transform: scale(1);
-  transition: transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+  transform: scale(1) translateY(0);
+  transition: transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.28s ease;
 }
 
-.stage-banner.hidden {
+.layer-banner.hidden {
   opacity: 0;
-  transform: scale(0.72);
+  transform: scale(0.75) translateY(-10px);
 }
 
-.stage-banner-sub {
-  font-size: 12px;
+.layer-banner-sub {
+  font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.26em;
+  letter-spacing: 0.22em;
   color: var(--theme-accent);
-  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.65);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.78);
 }
 
-.stage-banner-title {
-  font-size: 38px;
+.layer-banner-title {
+  font-size: 26px;
   font-weight: 900;
   letter-spacing: 0.08em;
   color: #ffffff;
-  text-shadow: 0 4px 20px rgba(0, 0, 0, 0.72);
+  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.8);
 }
 
-body.proto-mode .stage-banner-title {
+body.proto-mode .layer-banner-title {
   color: #111111;
   text-shadow: none;
 }
 
-body.proto-mode .stage-banner-sub {
+body.proto-mode .layer-banner-sub {
   text-shadow: none;
-}
-
-/* 次のシートへ丸く広がる切り替えワイプ（Circular Reveal） */
-.sheet-wipe {
-  position: absolute;
-  inset: 0;
-  --wipe-x: 50%;
-  --wipe-y: 50%;
-  --wipe-color: #53d8fb;
-  background: var(--wipe-color);
-  pointer-events: none;
-  z-index: 5;
-  opacity: 0;
-  clip-path: circle(0% at var(--wipe-x) var(--wipe-y));
-  transition: clip-path 0.38s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease;
-}
-
-.sheet-wipe.expanding {
-  opacity: 0.94;
-  clip-path: circle(150% at var(--wipe-x) var(--wipe-y));
-}
-
-.sheet-wipe.fading {
-  opacity: 0;
-  clip-path: circle(150% at var(--wipe-x) var(--wipe-y));
-}
-
-body.proto-mode .sheet-wipe {
-  display: none;
 }
 
 /* ゲームオーバー時のオーバーレイ（丸く広がる切り替え：Circular Reveal） */
@@ -381,7 +352,7 @@ body.proto-mode .overlay.hidden {
 
 .overlay-card {
   text-align: center;
-  padding: 24px 28px;
+  padding: 24px 26px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -404,22 +375,22 @@ body.proto-mode .overlay.hidden .overlay-card {
 .overlay-title {
   font-size: 13px;
   font-weight: 800;
-  letter-spacing: 0.26em;
+  letter-spacing: 0.24em;
   color: var(--danger);
 }
 
 .overlay-score {
-  font-size: 56px;
+  font-size: 54px;
   font-weight: 900;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
 .overlay-sub {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-muted);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   margin-bottom: 8px;
 }
 
@@ -453,10 +424,10 @@ body.proto-mode .retry-btn {
   background: var(--surface);
   border: 1px solid var(--surface-border);
   border-radius: 12px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 body.proto-mode .tuning-panel {
@@ -471,7 +442,7 @@ body.proto-mode .tuning-panel {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 700;
 }
 
@@ -480,7 +451,7 @@ body.proto-mode .tuning-panel {
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11.5px;
   cursor: pointer;
   text-decoration: underline;
 }
@@ -492,19 +463,19 @@ body.proto-mode .tuning-panel {
 .tuning-grid {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 9px;
 }
 
 .param-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .param-head {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
 }
 
@@ -518,33 +489,4 @@ body.proto-mode .tuning-panel {
   width: 100%;
   accent-color: var(--theme-accent);
   cursor: pointer;
-}
-
-/* スマホ縦画面で盤面とHUDが一画面に収まるよう余白を最適化 */
-@media (max-width: 480px) {
-  .app {
-    padding: 10px 10px 18px;
-    gap: 8px;
-  }
-
-  .stat-group {
-    gap: 14px;
-  }
-
-  .stat-value {
-    font-size: 23px;
-  }
-
-  .stat-value.muted {
-    font-size: 16px;
-  }
-
-  .icon-btn {
-    padding: 5px 8px;
-    font-size: 11px;
-  }
-
-  .hint {
-    font-size: 11.5px;
-  }
 }
