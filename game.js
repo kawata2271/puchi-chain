@@ -84,8 +84,8 @@
   const DEFAULT_PARAMS = {
     pressSpeedScale: 1.0,    // 上から迫るプレスの速さ倍率
     airTransferRate: 1.25,   // 小さい泡を潰したときに隣へ押し出される空気量倍率
-    criticalThreshold: 0.68, // 臨界（白く光って連鎖可能）になる膨らみ割合
-    dangerDuration: 2.0,     // 赤泡が自爆するまでの猶予秒数
+    criticalThreshold: 0.65, // 臨界（白く光って連鎖可能）になる膨らみ割合
+    overloadPenalty: 52,     // 押し込みすぎ暴発でプレス天井が降下する量（px）
     chainDelayMs: 50         // 連鎖が隣へ伝わる時間間隔（ミリ秒）
   };
 
@@ -119,7 +119,7 @@
     press: { input: document.getElementById("pressRange"), out: document.getElementById("pressOut") },
     transfer: { input: document.getElementById("transferRange"), out: document.getElementById("transferOut") },
     threshold: { input: document.getElementById("thresholdRange"), out: document.getElementById("thresholdOut") },
-    danger: { input: document.getElementById("dangerRange"), out: document.getElementById("dangerOut") },
+    penalty: { input: document.getElementById("penaltyRange"), out: document.getElementById("penaltyOut") },
     delay: { input: document.getElementById("delayRange"), out: document.getElementById("delayOut") }
   };
 
@@ -182,6 +182,7 @@
   let shakeMag = 0;
   let errorShakeTime = 0;
   let errorShakeAmp = 0;
+  let pressFlash = 0; // 暴発でプレスが急降下したときの赤フラッシュ
   let warningTickCooldown = 0;
 
   // マウスホバーおよびスマホの押し込み操作状態
@@ -285,7 +286,7 @@
 
   // 泡オブジェクトを作成する
   function createBubble(x, y, pressure, armored = false, staggerDelay = 0) {
-    const state = pressure >= 1.0 ? "danger" : pressure >= params.criticalThreshold ? "critical" : "growing";
+    const state = pressure >= params.criticalThreshold ? "critical" : "growing";
     return {
       id: nextBubbleId++,
       x,
@@ -296,7 +297,6 @@
       radius: radiusForPressure(pressure),
       state,
       armored,
-      dangerTimer: 0,
       chainQueued: false,
       dead: false,
       scale: staggerDelay > 0 && !protoMode ? 0.01 : 1,
@@ -432,6 +432,7 @@
     shakeMag = 0;
     errorShakeTime = 0;
     errorShakeAmp = 0;
+    pressFlash = 0;
     warningTickCooldown = 0;
 
     applyLayerTheme(LAYERS[0]);
@@ -577,11 +578,10 @@
     return dx * dx + dy * dy <= limit * limit;
   }
 
-  // 指定した臨界／危険泡に繋がっている塊（連結成分）を返す
+  // 指定した臨界泡に繋がっている塊（連結成分）を返す
   function getConnectedCriticalGroup(start) {
     const result = new Set();
-    if (!start || start.dead || start.armored) return result;
-    if (start.state !== "critical" && start.state !== "danger") return result;
+    if (!start || start.dead || start.armored || start.state !== "critical") return result;
 
     const queue = [start];
     result.add(start);
@@ -590,7 +590,7 @@
       const curr = queue.shift();
       for (const other of bubbles) {
         if (other.dead || other.armored || result.has(other)) continue;
-        if (other.state !== "critical" && other.state !== "danger") continue;
+        if (other.state !== "critical") continue;
         if (areBubblesTouching(curr, other, 1.26)) {
           result.add(other);
           queue.push(other);
@@ -602,12 +602,10 @@
 
   // 現在の深さに応じた難易度パラメータを返す
   function getDifficultyMetrics() {
-    const progress = Math.min(1, depthMeters / 170);
+    const progress = Math.min(1, depthMeters / 160);
     // プレス速度：序盤から油断できないスピードで迫り、深層ほど速くなる
-    const pressSpeed = (18 + progress * 26) * params.pressSpeedScale;
-    // 赤泡の自爆猶予
-    const dangerLimit = Math.max(1.1, params.dangerDuration * (1 - progress * 0.28));
-    return { pressSpeed, dangerLimit, progress };
+    const pressSpeed = (19 + progress * 27) * params.pressSpeedScale;
+    return { pressSpeed, progress };
   }
 
   // 小さい泡を押し潰したときに、物理的に接している周囲の泡へどれだけ空気が逃げるか計算する
@@ -616,10 +614,10 @@
       return [];
     }
 
-    // 接触している泡（硬い泡は空気を受け取らない）を近い順に最大5個取得
+    // 接触している泡（硬い泡とすでに空気が抜けたペチャンコ玉は空気を受け取らない）を近い順に最大5個取得
     const candidates = [];
     for (const other of bubbles) {
-      if (other === source || other.dead || other.armored || other.chainQueued) continue;
+      if (other === source || other.dead || other.armored || other.state === "flat" || other.chainQueued) continue;
       const dist = Math.hypot(other.x - source.x, other.y - source.y);
       if (dist <= (source.radius + other.radius) * 1.32) {
         candidates.push({ bubble: other, dist });
@@ -630,30 +628,19 @@
 
     if (targets.length === 0) return [];
 
-    // 逃げ場（周囲の接触泡）が少ないほど一点に空気が集中して一気に膨らむ
+    // 逃げ場が少ないほど一点に空気が集中して一気に膨らむ
     const totalAir = (0.16 + source.pressure * 0.78) * params.airTransferRate;
     const share = totalAir / targets.length;
-    const { dangerLimit } = getDifficultyMetrics();
 
     return targets.map((target) => {
+      const nextP = target.pressure + share;
       let outcome = "grow";
-      let willBurst = false;
-
-      if (target.state === "danger") {
-        outcome = "dangerAccel";
-        const addedTime = share * dangerLimit * 1.65;
-        if (target.dangerTimer + addedTime >= dangerLimit) {
-          willBurst = true;
-        }
-      } else {
-        const nextP = target.pressure + share;
-        if (nextP >= 1.0) {
-          outcome = "toDanger";
-        } else if (target.state === "growing" && nextP >= params.criticalThreshold) {
-          outcome = "toCritical";
-        }
+      if (nextP >= 1.0) {
+        outcome = "overload"; // 押し込みすぎ＝即時暴発でプレス天井が急降下する！
+      } else if (target.state === "growing" && nextP >= params.criticalThreshold) {
+        outcome = "toCritical";
       }
-      return { target, share, outcome, willBurst };
+      return { target, share, outcome };
     });
   }
 
@@ -676,7 +663,14 @@
       b.scale = 1;
     }
 
-    // 硬い殻の泡を直接叩いた場合は弾かれる（隣の連鎖爆風で砕く必要がある！）
+    // ペチャンコ玉（空気が抜けたカス）は押しても消えない（2連鎖以上の爆風でのみ粉砕可能）
+    if (b.state === "flat") {
+      b.scaleVel -= 3.2;
+      sound.playPressCancel();
+      return;
+    }
+
+    // 硬い殻の泡を直接叩いた場合は弾かれる（2連鎖以上の爆風で砕く必要がある！）
     if (b.armored) {
       b.scaleVel -= 5.5;
       sound.playArmorClink();
@@ -688,15 +682,16 @@
       return;
     }
 
-    if (b.state === "critical" || b.state === "danger") {
-      // 臨界／危険泡は触れた瞬間に即座に連鎖爆発！
+    if (b.state === "critical") {
+      // 白く光る臨界泡は触れた瞬間に即座に連鎖爆発！
       clearPressState();
       if (gameState === "ready") {
         gameState = "playing";
         hintTextEl.classList.add("hidden-soft");
       }
+      const groupSize = getConnectedCriticalGroup(b).size;
       const chainId = nextChainId++;
-      activeChains.set(chainId, { count: 0 });
+      activeChains.set(chainId, { count: 0, plannedSize: groupSize });
       b.chainQueued = true;
       triggerHaptic(14);
       executeChainPop(b, chainId, null, null);
@@ -740,32 +735,37 @@
     squeezeGrowingBubble(b);
   }
 
-  // 未成熟な泡を押し潰して、物理的に接触している周囲の泡へ空気を移動させる
+  // 未成熟な泡を押し潰して空気を隣へ移動させ、自身はペチャンコ玉として残す（連打抜け道封鎖）
   function squeezeGrowingBubble(b) {
     const plan = computeAirTransferPlan(b);
-    const { dangerLimit } = getDifficultyMetrics();
     const sx = b.x;
     const sy = b.y;
 
-    b.dead = true;
+    // 押し潰された小さい泡は消滅せず、空気が抜けたペチャンコ玉（flat）として居座る
+    b.state = "flat";
+    b.pressure = 0;
+    b.radius = 12;
+    b.scale = 0.55;
+    b.scaleVel = 4.5;
+
     sound.playAirPush(plan.length);
 
     if (!protoMode) {
-      spawnRing(sx, sy, b.radius * 1.35, "rgba(180, 200, 225, 0.45)", 1.6);
+      spawnRing(sx, sy, 24, "rgba(180, 200, 225, 0.4)", 1.5);
     }
 
     let promotedToCritical = false;
-    let pushedToDanger = false;
+    let overloadCount = 0;
 
     for (const item of plan) {
       const target = item.target;
-      if (target.dead) continue;
+      if (target.dead || target.state === "flat") continue;
 
       if (!protoMode) {
         const layer = LAYERS[currentLayerIndex];
         const puffColor =
-          item.outcome === "toDanger" || item.outcome === "dangerAccel"
-            ? "#ff7a84"
+          item.outcome === "overload"
+            ? "#ff5966"
             : item.outcome === "toCritical"
               ? "#ffffff"
               : layer.accent;
@@ -780,64 +780,65 @@
       }
 
       target.scaleVel += 6.2;
+      const prevState = target.state;
+      const nextP = target.pressure + item.share;
 
-      if (target.state === "danger") {
-        target.dangerTimer += item.share * dangerLimit * 1.65;
-        pushedToDanger = true;
-        if (target.dangerTimer >= dangerLimit) {
-          triggerGameOver("OVERLOAD BURST", target.x, target.y);
-          return;
+      if (nextP >= 1.0) {
+        // 押し込みすぎによる即時オーバーロード暴発！暴発した泡もペチャンコ玉になり、プレス天井が急降下する
+        overloadCount += 1;
+        target.state = "flat";
+        target.pressure = 0;
+        target.radius = 12;
+        target.scale = 0.45;
+        target.scaleVel = 6;
+        if (!protoMode) {
+          spawnRing(target.x, target.y, 46, "#ff4d5a", 4);
+          spawnParticles(target.x, target.y, 18, "#ff4d5a", 190);
+          spawnFloatText(target.x, target.y - 8, "OVERLOAD!", "#ff5966", 15);
+        }
+      } else if (nextP >= params.criticalThreshold) {
+        target.pressure = nextP;
+        target.radius = radiusForPressure(nextP);
+        target.state = "critical";
+        if (prevState === "growing") {
+          promotedToCritical = true;
+          if (!protoMode) {
+            spawnRing(target.x, target.y, target.radius * 1.45, "rgba(255, 255, 255, 0.55)", 1.8);
+            spawnLikeBurst(target.x, target.y, target.radius * 1.5, "#ffffff", 6);
+          }
         }
       } else {
-        const prevState = target.state;
-        const nextP = target.pressure + item.share;
-
-        if (nextP >= 1.0) {
-          const overflow = nextP - 1.0;
-          target.pressure = 1.0;
-          target.radius = radiusForPressure(1.0);
-          target.state = "danger";
-          target.dangerTimer = Math.min(dangerLimit * 0.55, overflow * dangerLimit * 1.15);
-          pushedToDanger = true;
-          if (!protoMode) {
-            spawnRing(target.x, target.y, target.radius * 1.5, "rgba(255, 77, 90, 0.7)", 2.2);
-          }
-        } else if (nextP >= params.criticalThreshold) {
-          target.pressure = nextP;
-          target.radius = radiusForPressure(nextP);
-          target.state = "critical";
-          if (prevState === "growing") {
-            promotedToCritical = true;
-            if (!protoMode) {
-              spawnRing(target.x, target.y, target.radius * 1.45, "rgba(255, 255, 255, 0.55)", 1.8);
-              spawnLikeBurst(target.x, target.y, target.radius * 1.5, "#ffffff", 6);
-            }
-          }
-        } else {
-          target.pressure = nextP;
-          target.radius = radiusForPressure(nextP);
-        }
+        target.pressure = nextP;
+        target.radius = radiusForPressure(nextP);
       }
     }
 
-    if (pushedToDanger) {
-      sound.playOverloadPush();
-      triggerErrorShake(6.5);
+    if (overloadCount > 0) {
+      // 暴発ペナルティ：上の赤いプレス天井が一気にドスンと降下して迫る！
+      pressY += params.overloadPenalty * overloadCount;
+      pressFlash = 1.0;
+      sound.playBurst();
+      triggerErrorShake(11);
+      triggerHaptic([25, 20, 35]);
+
+      if (core.y - core.radius <= pressY + 3) {
+        triggerGameOver("OVERLOAD CRUSH", core.x, core.y);
+      }
     } else if (promotedToCritical) {
       sound.playCharge();
     }
   }
 
-  // 臨界／危険泡の連鎖破裂・爆風インパルス・硬い泡の粉砕処理
+  // 臨界泡の連鎖破裂（2連鎖以上で周囲のペチャンコ玉と硬い泡を一気に粉砕する！）
   function executeChainPop(b, chainId, fromX, fromY) {
     if (gameState !== "playing" || b.dead) return;
 
     const bx = b.x;
     const by = b.y;
     const br = b.radius;
-    const wasDanger = b.state === "danger";
-    const chainInfo = activeChains.get(chainId) || { count: 0 };
+    const chainInfo = activeChains.get(chainId) || { count: 0, plannedSize: 1 };
     chainInfo.count += 1;
+    const isRealChain = chainInfo.plannedSize >= 2 || chainInfo.count >= 2;
     activeChains.set(chainId, chainInfo);
 
     const comboNum = chainInfo.count;
@@ -848,11 +849,11 @@
     b.dead = true;
     b.chainQueued = false;
 
-    const gained = comboNum * 2 + (wasDanger ? 10 : 0);
+    const gained = isRealChain ? comboNum * 3 : 1;
     score += gained;
     updateHud(false, true);
 
-    sound.playChainPop(comboNum - 1, wasDanger);
+    sound.playChainPop(comboNum - 1, false);
     if (comboNum > 1) {
       triggerHaptic(10);
     }
@@ -860,10 +861,13 @@
     const layer = LAYERS[currentLayerIndex];
 
     if (!protoMode) {
-      const hueColor = wasDanger ? "#ff7a84" : comboNum >= 5 ? layer.accent : "#ffffff";
-      spawnRing(bx, by, br * (2.1 + Math.min(0.9, comboNum * 0.1)), hueColor, wasDanger ? 3.5 : 2.5);
-      spawnLikeBurst(bx, by, br * (1.8 + Math.min(0.6, comboNum * 0.08)), hueColor, 8);
-      spawnParticles(bx, by, Math.min(18, 7 + comboNum * 2), hueColor, 155 + comboNum * 15);
+      const hueColor = comboNum >= 5 ? layer.accent : isRealChain ? "#ffffff" : "rgba(220, 232, 245, 0.8)";
+      const ringScale = isRealChain ? (2.2 + Math.min(0.95, comboNum * 0.11)) : 1.45;
+      spawnRing(bx, by, br * ringScale, hueColor, isRealChain ? 2.6 : 1.6);
+      if (isRealChain) {
+        spawnLikeBurst(bx, by, br * (1.8 + Math.min(0.6, comboNum * 0.08)), hueColor, 8);
+      }
+      spawnParticles(bx, by, isRealChain ? Math.min(18, 7 + comboNum * 2) : 6, hueColor, isRealChain ? 160 + comboNum * 15 : 95);
 
       if (comboNum >= 6 && comboNum % 2 === 0) {
         spawnConfetti(bx, by, 14, 190);
@@ -873,14 +877,17 @@
         beams.push({ x1: fromX, y1: fromY, x2: bx, y2: by, life: 1 });
       }
 
-      const label = wasDanger ? `+${gained} SAVE` : comboNum >= 3 ? `${comboNum} CHAIN!` : `+${gained}`;
+      const label = comboNum >= 3 ? `${comboNum} CHAIN!` : isRealChain ? `+${gained}` : "+1";
       spawnFloatText(bx, by - 6, label, hueColor, Math.min(20, 12 + Math.floor(comboNum / 2)));
-      shakeMag = Math.min(8.5, Math.max(shakeMag, 1.8 + comboNum * 0.5));
+      shakeMag = Math.min(8.5, Math.max(shakeMag, isRealChain ? 2.0 + comboNum * 0.5 : 0.8));
     }
 
-    // 1. 周囲の泡へ爆風インパルス＆硬い殻の粉砕＆連鎖伝播
+    // 1. 周囲の泡への爆風・ペチャンコ玉粉砕・硬い殻粉砕・連鎖伝播
     const delaySec = params.chainDelayMs / 1000;
     let brokeArmor = false;
+    // 2連鎖以上なら大きな爆風でペチャンコ玉と硬い泡を根こそぎ吹っ飛ばす！単発は威力が弱い
+    const flatCrushRange = isRealChain ? br + 44 + Math.min(26, comboNum * 4) : 0;
+    const blastRange = isRealChain ? br + 68 + Math.min(28, comboNum * 4) : br + 24;
 
     for (const other of bubbles) {
       if (other === b || other.dead) continue;
@@ -889,16 +896,26 @@
       const dist = Math.hypot(dx, dy);
       if (dist < 0.001) continue;
 
-      // 爆風による物理吹き飛ばし（雪崩と地形変化を生む！）
-      const blastRange = br + other.radius + 54;
-      if (dist < blastRange) {
-        const power = (1 - dist / blastRange) * (155 + Math.min(90, comboNum * 12));
+      // 2連鎖以上の爆風で、周囲の邪魔なペチャンコ玉（flat）を一気に粉砕・消滅させる！
+      if (isRealChain && other.state === "flat" && dist <= flatCrushRange + other.radius) {
+        other.dead = true;
+        score += 2;
+        if (!protoMode) {
+          spawnParticles(other.x, other.y, 6, layer.accent, 130);
+          spawnRing(other.x, other.y, 20, "rgba(255, 255, 255, 0.4)", 1.4);
+        }
+        continue;
+      }
+
+      // 爆風による物理吹き飛ばし
+      if (dist < blastRange + other.radius) {
+        const power = (1 - dist / (blastRange + other.radius)) * (isRealChain ? 165 + Math.min(95, comboNum * 12) : 55);
         other.vx += (dx / dist) * power;
         other.vy += (dy / dist) * power;
       }
 
-      // 近接している硬い殻の泡は爆風で殻が砕け、臨界状態へ変わる！
-      if (other.armored && dist <= (br + other.radius) * 1.42) {
+      // 2連鎖以上の爆風で、硬い殻の泡をパリンッと砕いて臨界泡にする！
+      if (isRealChain && other.armored && dist <= (br + other.radius) * 1.46) {
         other.armored = false;
         other.pressure = Math.max(other.pressure, params.criticalThreshold + 0.06);
         other.radius = radiusForPressure(other.pressure);
@@ -912,8 +929,8 @@
         continue;
       }
 
-      // 接触している他の臨界／危険泡へ連鎖予約
-      if (!other.armored && !other.chainQueued && (other.state === "critical" || other.state === "danger")) {
+      // 接触している他の臨界泡へ連鎖予約
+      if (!other.armored && !other.chainQueued && other.state === "critical") {
         if (dist <= (br + other.radius) * 1.28) {
           other.chainQueued = true;
           other.scaleVel += 6.2;
@@ -932,19 +949,19 @@
       sound.playArmorBreak();
     }
 
-    // 2. 光るコアにも下向きの気持ちよい爆風アシスト（上への押し戻しは弱めて落ちやすくする）
+    // 2. 光るコアへの爆風アシスト
     const cdx = core.x - bx;
     const cdy = core.y - by;
     const cdist = Math.hypot(cdx, cdy);
     if (cdist > 0.001 && cdist < br + core.radius + 58) {
-      const f = (1 - cdist / (br + core.radius + 58)) * 90;
+      const f = (1 - cdist / (br + core.radius + 58)) * (isRealChain ? 95 : 35);
       core.vx += (cdx / cdist) * f;
-      core.vy += Math.max(-25, (cdy / cdist) * f);
+      core.vy += Math.max(-20, (cdy / cdist) * f);
     }
 
-    // 3. 大連鎖（5連鎖以上の節目）でプレスラインをわずかに押し上げるごほうび
-    if (comboNum >= 5 && comboNum % 2 === 1) {
-      pressY = Math.max(cameraY - 120, pressY - 14);
+    // 3. 大連鎖（4連鎖以上の節目）でプレス天井を少し押し上げるごほうび
+    if (comboNum >= 4 && comboNum % 2 === 0) {
+      pressY = Math.max(cameraY - 120, pressY - 16);
     }
   }
 
@@ -1109,12 +1126,12 @@
     }
 
     isPressPreview = false;
-    if (!hoverBubble || hoverBubble.dead || hoverBubble.armored) {
+    if (!hoverBubble || hoverBubble.dead || hoverBubble.armored || hoverBubble.state === "flat") {
       hoverGroupSet.clear();
       activeTransferPlan = [];
       return;
     }
-    if (hoverBubble.state === "critical" || hoverBubble.state === "danger") {
+    if (hoverBubble.state === "critical") {
       hoverGroupSet = getConnectedCriticalGroup(hoverBubble);
       activeTransferPlan = [];
     } else if (hoverBubble.state === "growing") {
@@ -1342,7 +1359,7 @@
       b.offsetX += b.offsetVx * dt;
       b.offsetY += b.offsetVy * dt;
 
-      b.wobblePhase += dt * (b.state === "danger" ? 26 : 11);
+      b.wobblePhase += dt * 11;
     }
 
     // エフェクト更新
@@ -1355,6 +1372,10 @@
     if (errorShakeTime > 0) {
       errorShakeTime = Math.max(0, errorShakeTime - dt);
       if (errorShakeTime === 0) errorShakeAmp = 0;
+    }
+
+    if (pressFlash > 0) {
+      pressFlash = Math.max(0, pressFlash - dt * 2.6);
     }
 
     for (let i = particles.length - 1; i >= 0; i--) {
@@ -1417,7 +1438,7 @@
     }
 
     elapsed += dt;
-    const { pressSpeed, dangerLimit } = getDifficultyMetrics();
+    const { pressSpeed } = getDifficultyMetrics();
 
     // 予約済みの連鎖ポップを進める
     for (let i = pendingPops.length - 1; i >= 0; i--) {
@@ -1486,12 +1507,10 @@
       return;
     }
 
-    // 各泡の危険カウントダウン・プレス圧迫・ごく緩やかな膨張を更新
-    let maxUrgency = 0;
+    // プレスに飲み込まれた泡の消滅と、画面内のごく緩やかな膨張を更新
     for (const b of bubbles) {
       if (b.dead || b.chainQueued) continue;
 
-      // プレス天井に完全に飲み込まれた泡は弾けて消える
       if (b.y + b.radius * 0.4 < pressY) {
         b.dead = true;
         if (!protoMode) {
@@ -1500,44 +1519,25 @@
         continue;
       }
 
-      if (b.armored) continue;
+      if (b.armored || b.state === "flat") continue;
       if (pressedBubble === b && pressInside) continue;
 
-      // 画面内の上部でプレスに圧迫されている泡は急速に危険化する
-      const distFromPress = (b.y - b.radius) - pressY;
-      if (distFromPress < 22 && distFromPress > -20) {
-        b.pressure = Math.min(1.0, b.pressure + 0.25 * dt);
+      // 通常泡は放置で勝手に暴発せず、ごく緩やかに膨らむだけ（自分で押し込む必要がある）
+      if (b.y < cameraY + WORLD_H + 40 && b.pressure < 0.92) {
+        b.pressure = Math.min(0.92, b.pressure + 0.005 * dt);
         b.radius = radiusForPressure(b.pressure);
-      } else if (b.y < cameraY + WORLD_H + 40) {
-        // 通常時はごくわずかにしか膨らまない（自分で押し込んで連鎖を作る必要がある！）
-        b.pressure = Math.min(1.0, b.pressure + 0.007 * dt);
-        b.radius = radiusForPressure(b.pressure);
-      }
-
-      if (b.pressure >= 1.0 && b.state !== "danger") {
-        b.state = "danger";
-        b.dangerTimer = 0;
-        b.scaleVel += 4.0;
-      } else if (b.pressure >= params.criticalThreshold && b.state === "growing") {
-        b.state = "critical";
-        b.scaleVel += 3.0;
-      }
-
-      if (b.state === "danger") {
-        b.dangerTimer += dt;
-        const urgency = Math.min(1, b.dangerTimer / dangerLimit);
-        if (urgency > maxUrgency) maxUrgency = urgency;
-        if (b.dangerTimer >= dangerLimit) {
-          triggerGameOver("OVERLOAD BURST", b.x, b.y);
-          return;
+        if (b.pressure >= params.criticalThreshold && b.state === "growing") {
+          b.state = "critical";
+          b.scaleVel += 3.0;
         }
       }
     }
 
-    // プレスがコアに近づいているときの緊迫感も警告音に反映
+    // プレスがコアに近づいているときの緊迫感を警告音に反映
+    let maxUrgency = 0;
     const pressGap = (core.y - core.radius) - pressY;
-    if (pressGap < 85) {
-      maxUrgency = Math.max(maxUrgency, 1 - Math.max(0, pressGap) / 85);
+    if (pressGap < 95) {
+      maxUrgency = 1 - Math.max(0, pressGap) / 95;
     }
 
     if (maxUrgency > 0) {
@@ -1556,7 +1556,6 @@
   // ワールド全体を描画する
   function draw() {
     ctx.clearRect(0, 0, WORLD_W, WORLD_H);
-    const { dangerLimit } = getDifficultyMetrics();
     const layer = LAYERS[currentLayerIndex];
 
     ctx.save();
@@ -1586,18 +1585,16 @@
     // 2. 左右のうねる岩壁と、丸い岩柱（障害物）
     drawWallsAndRocks(layer);
 
-    // 3. 接触している臨界／危険泡同士を繋ぐ白いライン
+    // 3. 接触している臨界泡同士を繋ぐ白いライン
     ctx.lineCap = "round";
     for (let i = 0; i < bubbles.length; i++) {
       const a = bubbles[i];
-      if (a.dead || a.armored || a.appearDelay > 0) continue;
+      if (a.dead || a.armored || a.appearDelay > 0 || a.state !== "critical") continue;
       if (a.y < cameraY - 60 || a.y > cameraY + WORLD_H + 60) continue;
-      if (a.state !== "critical" && a.state !== "danger") continue;
 
       for (let j = i + 1; j < bubbles.length; j++) {
         const b = bubbles[j];
-        if (b.dead || b.armored || b.appearDelay > 0) continue;
-        if (b.state !== "critical" && b.state !== "danger") continue;
+        if (b.dead || b.armored || b.appearDelay > 0 || b.state !== "critical") continue;
         if (!areBubblesTouching(a, b, 1.26)) continue;
 
         const inHoverGroup = hoverGroupSet.has(a) && hoverGroupSet.has(b);
@@ -1621,12 +1618,12 @@
       for (const item of activeTransferPlan) {
         const t = item.target;
         if (t.dead) continue;
-        const isDangerOut = item.outcome === "toDanger" || item.outcome === "dangerAccel";
+        const isDangerOut = item.outcome === "overload";
         const isPromoOut = item.outcome === "toCritical";
         const color = protoMode
           ? isDangerOut ? "#111111" : isPressPreview ? "#333333" : "#555555"
           : isDangerOut
-            ? isPressPreview ? "rgba(255, 92, 106, 0.98)" : "rgba(255, 92, 106, 0.85)"
+            ? isPressPreview ? "rgba(255, 77, 90, 0.98)" : "rgba(255, 77, 90, 0.88)"
             : isPromoOut
               ? isPressPreview ? "rgba(255, 255, 255, 0.98)" : "rgba(255, 255, 255, 0.8)"
               : isPressPreview ? "rgba(195, 224, 255, 0.85)" : "rgba(170, 200, 235, 0.5)";
@@ -1671,7 +1668,7 @@
     for (const b of bubbles) {
       if (b.dead || b.appearDelay > 0) continue;
       if (b.y < cameraY - 50 || b.y > cameraY + WORLD_H + 55) continue;
-      drawBubble(b, layer, dangerLimit, transferTargetMap.get(b));
+      drawBubble(b, layer, transferTargetMap.get(b));
     }
 
     // 7. 光る重力コアを描画する
@@ -1846,7 +1843,7 @@
   }
 
   // 個別の泡を描画する
-  function drawBubble(b, layer, dangerLimit, transferPreview) {
+  function drawBubble(b, layer, transferPreview) {
     const isPressedHere = pressedBubble === b && pressInside && gameState !== "gameover";
     const inHoverGroup = hoverGroupSet.has(b);
 
@@ -1860,20 +1857,36 @@
     if (b.state === "critical" && !b.armored && !protoMode) {
       jitterX = Math.sin(b.wobblePhase) * 0.8;
       jitterY = Math.cos(b.wobblePhase * 1.3) * 0.8;
-    } else if (b.state === "danger") {
-      const urgency = Math.min(1, b.dangerTimer / dangerLimit);
-      const amp = protoMode ? 1.2 : 1.4 + urgency * 2.2;
-      jitterX = Math.sin(b.wobblePhase * 1.7) * amp;
-      jitterY = Math.cos(b.wobblePhase * 2.1) * amp;
     } else if (isPressPreview && transferPreview && !protoMode && transferPreview.outcome !== "grow") {
-      jitterX = Math.sin(b.wobblePhase * 2.2) * 1.0;
-      jitterY = Math.cos(b.wobblePhase * 2.5) * 1.0;
+      jitterX = Math.sin(b.wobblePhase * 2.2) * 1.2;
+      jitterY = Math.cos(b.wobblePhase * 2.5) * 1.2;
     }
 
     const cx = b.x + jitterX + b.offsetX;
     const cy = b.y + jitterY + b.offsetY;
 
-    // 硬い殻の泡（爆風で砕くターゲット）
+    // 空気が抜けたペチャンコ玉（flat：押しても消えず、2連鎖以上の爆風でのみ粉砕可能）
+    if (b.state === "flat") {
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = protoMode ? "#c0c0c0" : "rgba(255, 255, 255, 0.12)";
+      ctx.fill();
+      ctx.strokeStyle = protoMode ? "#808080" : "rgba(255, 255, 255, 0.24)";
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      // しわ／凹みを示す小さな横線
+      ctx.beginPath();
+      ctx.moveTo(cx - radius * 0.42, cy);
+      ctx.lineTo(cx + radius * 0.42, cy);
+      ctx.strokeStyle = protoMode ? "#666666" : "rgba(0, 0, 0, 0.45)";
+      ctx.lineWidth = 1.6;
+      ctx.lineCap = "round";
+      ctx.stroke();
+      return;
+    }
+
+    // 硬い殻の泡（2連鎖以上の爆風で砕くターゲット）
     if (b.armored) {
       ctx.beginPath();
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -1883,7 +1896,6 @@
       ctx.lineWidth = 3;
       ctx.stroke();
 
-      // 六角形リングで「硬い殻」を直感的に示す
       ctx.beginPath();
       for (let i = 0; i < 6; i++) {
         const a = (Math.PI / 3) * i - Math.PI / 6;
@@ -1908,15 +1920,6 @@
       } else if (b.state === "critical") {
         ctx.fillStyle = inHoverGroup ? "#222222" : "#444444";
         ctx.fill();
-      } else if (b.state === "danger") {
-        ctx.fillStyle = "#111111";
-        ctx.fill();
-        const remain = Math.max(0, 1 - b.dangerTimer / dangerLimit);
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius + 3 + remain * 8, 0, Math.PI * 2);
-        ctx.strokeStyle = "#111111";
-        ctx.lineWidth = 2;
-        ctx.stroke();
       }
     } else if (b.state === "growing") {
       const ratio = b.pressure / params.criticalThreshold;
@@ -1968,56 +1971,44 @@
       ctx.strokeStyle = inHoverGroup ? "#ffffff" : layer.accent;
       ctx.lineWidth = inHoverGroup ? 2.4 : 1.7;
       ctx.stroke();
-    } else if (b.state === "danger") {
-      const urgency = Math.min(1, b.dangerTimer / dangerLimit);
-      const remain = Math.max(0, 1 - urgency);
-      const pulse = 0.5 + 0.5 * Math.sin(b.wobblePhase * 1.4);
-
-      ctx.save();
-      ctx.shadowColor = "rgba(255, 77, 90, 0.7)";
-      ctx.shadowBlur = 12 + urgency * 10;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius * (1 + pulse * 0.04), 0, Math.PI * 2);
-      ctx.fillStyle = "#ff4d5a";
-      ctx.fill();
-      ctx.restore();
-
-      ctx.beginPath();
-      ctx.arc(cx - radius * 0.26, cy - radius * 0.26, radius * 0.24, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255, 230, 232, 0.6)";
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * remain);
-      ctx.strokeStyle = "#ff9aa3";
-      ctx.lineWidth = 2.8;
-      ctx.stroke();
     }
 
-    // 空気押し出し先の状態変化プレビューリング
+    // 空気押し出し先の状態変化プレビュー（暴発する相手は赤実線リング＋×印で明確に警告！）
     if (transferPreview) {
       ctx.save();
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius + 5, 0, Math.PI * 2);
-
-      if (transferPreview.willBurst) {
+      if (transferPreview.outcome === "overload") {
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius + 5, 0, Math.PI * 2);
         ctx.strokeStyle = protoMode ? "#000000" : "#ff3b4a";
         ctx.lineWidth = isPressPreview ? 3.8 : 3;
-        ctx.setLineDash([]);
-      } else if (transferPreview.outcome === "toDanger" || transferPreview.outcome === "dangerAccel") {
-        ctx.strokeStyle = protoMode ? "#222222" : "rgba(255, 92, 106, 0.96)";
-        ctx.lineWidth = isPressPreview ? 3 : 2.2;
-      } else if (transferPreview.outcome === "toCritical") {
-        ctx.strokeStyle = protoMode ? "#333333" : "rgba(255, 255, 255, 0.96)";
-        ctx.lineWidth = isPressPreview ? 3 : 2.2;
+        ctx.stroke();
+
+        // 暴発の警告×印
+        const xSize = 6.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - xSize, cy - xSize);
+        ctx.lineTo(cx + xSize, cy + xSize);
+        ctx.moveTo(cx + xSize, cy - xSize);
+        ctx.lineTo(cx - xSize, cy + xSize);
+        ctx.strokeStyle = protoMode ? "#000000" : "#ff3b4a";
+        ctx.lineWidth = 2.6;
+        ctx.lineCap = "round";
+        ctx.stroke();
       } else {
-        ctx.strokeStyle = protoMode
-          ? "#666666"
-          : isPressPreview ? "rgba(195, 224, 255, 0.78)" : "rgba(170, 200, 235, 0.45)";
-        ctx.lineWidth = isPressPreview ? 2 : 1.4;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius + 5, 0, Math.PI * 2);
+        if (transferPreview.outcome === "toCritical") {
+          ctx.strokeStyle = protoMode ? "#333333" : "rgba(255, 255, 255, 0.96)";
+          ctx.lineWidth = isPressPreview ? 3 : 2.2;
+        } else {
+          ctx.strokeStyle = protoMode
+            ? "#666666"
+            : isPressPreview ? "rgba(195, 224, 255, 0.78)" : "rgba(170, 200, 235, 0.45)";
+          ctx.lineWidth = isPressPreview ? 2 : 1.4;
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
       ctx.restore();
     }
   }
@@ -2085,12 +2076,12 @@
     ctx.fillStyle = grad;
     ctx.fillRect(0, topY, WORLD_W, pressY - topY);
 
-    // 警戒ストライプの先端ライン
+    // 警戒ストライプの先端ライン（暴発急降下時は明るくフラッシュ）
     ctx.beginPath();
     ctx.moveTo(0, pressY);
     ctx.lineTo(WORLD_W, pressY);
-    ctx.strokeStyle = protoMode ? "#111111" : "#ff6b7a";
-    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = protoMode ? "#111111" : pressFlash > 0.1 ? "#ffffff" : "#ff6b7a";
+    ctx.lineWidth = pressFlash > 0.1 ? 5.5 : 3.5;
     ctx.stroke();
 
     // 下向きの小さな鋸歯（押し潰すプレスの視覚記号）
@@ -2289,8 +2280,8 @@
     sliders.threshold.input.value = String(threshPct);
     sliders.threshold.out.textContent = `${threshPct}%`;
 
-    sliders.danger.input.value = String(params.dangerDuration);
-    sliders.danger.out.textContent = `${params.dangerDuration.toFixed(1)}s`;
+    sliders.penalty.input.value = String(params.overloadPenalty);
+    sliders.penalty.out.textContent = `${params.overloadPenalty}px`;
 
     sliders.delay.input.value = String(params.chainDelayMs);
     sliders.delay.out.textContent = `${params.chainDelayMs}ms`;
@@ -2309,7 +2300,7 @@
   sliders.threshold.input.addEventListener("input", () => {
     params.criticalThreshold = Number(sliders.threshold.input.value) / 100;
     for (const b of bubbles) {
-      if (b.dead || b.armored) continue;
+      if (b.dead || b.armored || b.state === "flat") continue;
       if (b.state === "growing" && b.pressure >= params.criticalThreshold) {
         b.state = "critical";
       } else if (b.state === "critical" && b.pressure < params.criticalThreshold) {
@@ -2319,8 +2310,8 @@
     syncSlidersUI();
   });
 
-  sliders.danger.input.addEventListener("input", () => {
-    params.dangerDuration = Number(sliders.danger.input.value);
+  sliders.penalty.input.addEventListener("input", () => {
+    params.overloadPenalty = Number(sliders.penalty.input.value);
     syncSlidersUI();
   });
 

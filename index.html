@@ -72,7 +72,7 @@
       </div>
 
       <!-- 開始前のみ表示する一行ガイド -->
-      <p class="hint" id="hintText">小さい泡を押して離すと隣が膨らむ。連鎖で穴を空けて光るコアを落とし、上の赤ラインから逃げろ。</p>
+      <p class="hint" id="hintText">小さい泡を押して隣を白く育て、2連鎖以上でペチャンコ玉ごと吹っ飛ばせ。押し込みすぎると暴発して赤ラインが迫る。</p>
     </main>
 
     <!-- ステップ4検証用：パラメータ調整パネル（デフォルト非表示） -->
@@ -102,17 +102,17 @@
         <label class="param-row">
           <div class="param-head">
             <span>臨界ライン（白く光って連鎖可能になる膨らみ）</span>
-            <output id="thresholdOut">68%</output>
+            <output id="thresholdOut">65%</output>
           </div>
-          <input type="range" id="thresholdRange" min="52" max="82" step="2" value="68" />
+          <input type="range" id="thresholdRange" min="52" max="80" step="2" value="65" />
         </label>
 
         <label class="param-row">
           <div class="param-head">
-            <span>赤泡が自爆するまでの猶予時間</span>
-            <output id="dangerOut">2.0s</output>
+            <span>暴発ペナルティ（プレス降下量）</span>
+            <output id="penaltyOut">52px</output>
           </div>
-          <input type="range" id="dangerRange" min="1.0" max="3.5" step="0.1" value="2.0" />
+          <input type="range" id="penaltyRange" min="20" max="90" step="4" value="52" />
         </label>
 
         <label class="param-row">
