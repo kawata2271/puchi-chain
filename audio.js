@@ -37,6 +37,46 @@ class SoundEngine {
     return buffer;
   }
 
+  // 小さい泡を指で押し込んだ瞬間の柔らかな「プニッ」音
+  playPressStart() {
+    if (!this.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(240, now);
+    osc.frequency.exponentialRampToValueAtTime(165, now + 0.048);
+
+    gain.gain.setValueAtTime(0.09, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.052);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.056);
+  }
+
+  // 押し込みを指スライドでキャンセルしたときの控えめな戻り音
+  playPressCancel() {
+    if (!this.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(255, now + 0.036);
+
+    gain.gain.setValueAtTime(0.055, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.042);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.045);
+  }
+
   // 未成熟の泡を押し潰して隣へ空気を逃がすときの「プニュ・シュッ」音
   playAirPush(targetCount) {
     if (!this.enabled || !this.ctx) return;

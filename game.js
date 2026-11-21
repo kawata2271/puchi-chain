@@ -92,10 +92,38 @@
   let shakeMag = 0;
   let warningTickCooldown = 0;
 
-  // マウスホバー中のセルと、ホバー時の予測データ
+  // マウスホバーおよびスマホの押し込み操作状態
   let hoverCell = null;
+  let activePointerId = null;
+  let pressedCell = null;
+  let pressInside = false;
   let hoverGroupSet = new Set();
-  let hoverTransferPlan = [];
+  let activeTransferPlan = [];
+  let isPressPreview = false;
+
+  // 対応スマホ端末でのみ極小バイブレーション（ハプティクス）を鳴らす
+  function triggerHaptic(pattern) {
+    if (protoMode) return;
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      try {
+        navigator.vibrate(pattern);
+      } catch (_) {}
+    }
+  }
+
+  // 押し込み状態をリセットする
+  function clearPressState() {
+    if (activePointerId !== null) {
+      try {
+        if (canvas.hasPointerCapture(activePointerId)) {
+          canvas.releasePointerCapture(activePointerId);
+        }
+      } catch (_) {}
+    }
+    activePointerId = null;
+    pressedCell = null;
+    pressInside = false;
+  }
 
   // 膨張の塊を生むための緩やかなホットスポット
   const hotspots = [
@@ -123,6 +151,7 @@
 
   // 盤面を初期化する（押し出しによる橋架けと連鎖の両方をすぐ体感できる配置）
   function resetBoard() {
+    clearPressState();
     grid = [];
     pendingPops = [];
     activeChains.clear();
@@ -313,8 +342,8 @@
     });
   }
 
-  // プレイヤーのクリック／タップ入力を処理する
-  function handleCellPress(cell) {
+  // ポインタ押下時の処理（パンパン泡は即時破裂、小さい泡は押し込み開始）
+  function handlePointerDownOnCell(cell, pointerId) {
     if (!cell) return;
     sound.unlock();
 
@@ -325,23 +354,55 @@
       return;
     }
 
+    if (cell.state === "popped" || cell.chainQueued) return;
+
+    if (cell.state === "critical" || cell.state === "danger") {
+      // 臨界／危険泡は限界まで張っているため、触れた瞬間に遅延ゼロで連鎖破裂させる
+      clearPressState();
+      if (gameState === "ready") {
+        gameState = "playing";
+        hintTextEl.classList.add("hidden-soft");
+      }
+      const chainId = nextChainId++;
+      activeChains.set(chainId, { count: 0 });
+      cell.chainQueued = true;
+      triggerHaptic(14);
+      executeChainPop(cell, chainId, 0, null);
+    } else if (cell.state === "growing") {
+      // 小さい泡は指を置いているあいだ凹ませて空気の逃げ先を見せ、離したときに確定する
+      if (activePointerId !== null) return;
+      activePointerId = pointerId;
+      pressedCell = cell;
+      pressInside = true;
+      cell.scaleVel -= 5.0;
+      sound.playPressStart();
+      triggerHaptic(8);
+      try {
+        canvas.setPointerCapture(pointerId);
+      } catch (_) {}
+    }
+  }
+
+  // 押し込んでいた小さい泡を指から離したときに確定させる
+  function confirmPressedCell() {
+    const cell = pressedCell;
+    const shouldExecute =
+      Boolean(cell) &&
+      pressInside &&
+      gameState !== "gameover" &&
+      cell.state === "growing" &&
+      !cell.chainQueued;
+
+    clearPressState();
+
+    if (!shouldExecute) return;
+
     if (gameState === "ready") {
       gameState = "playing";
       hintTextEl.classList.add("hidden-soft");
     }
-
-    if (cell.state === "popped" || cell.chainQueued) return;
-
-    if (cell.state === "growing") {
-      // 未成熟の泡：押し潰して中の空気を上下左右の生きている泡へ追い込む
-      squeezeGrowingCell(cell);
-    } else if (cell.state === "critical" || cell.state === "danger") {
-      // 臨界または危険泡：膜を破って連鎖爆発を開始する
-      const chainId = nextChainId++;
-      activeChains.set(chainId, { count: 0 });
-      cell.chainQueued = true;
-      executeChainPop(cell, chainId, 0, null);
-    }
+    triggerHaptic(12);
+    squeezeGrowingCell(cell);
   }
 
   // 未成熟な泡を押し潰して、中の空気を上下左右の隣接泡へ移動させる処理
@@ -471,8 +532,11 @@
     checkBestScore();
     updateHud();
 
-    // 効果音（連鎖数に応じて音階が上昇）
+    // 効果音（連鎖数に応じて音階が上昇）と極小バイブレーション
     sound.playChainPop(comboNum - 1, wasDanger);
+    if (comboNum > 1) {
+      triggerHaptic(10);
+    }
 
     // 視覚エフェクト（通常モード時）
     if (!protoMode) {
@@ -539,6 +603,7 @@
 
   // 自爆によるゲームオーバー処理
   function triggerGameOver(cell) {
+    clearPressState();
     gameState = "gameover";
     burstCell = cell;
     pendingPops = [];
@@ -546,6 +611,7 @@
     gameOverLockUntil = performance.now() + 280;
 
     sound.playBurst();
+    triggerHaptic([30, 30, 50]);
 
     if (!protoMode) {
       const pos = cellCenter(cell.r, cell.c);
@@ -610,33 +676,61 @@
     });
   }
 
-  // ホバー予測の状態を最新化する
-  function refreshHoverPredictions() {
-    if (!hoverCell || gameState === "gameover") {
+  // 押し込み中またはホバー中の予測状態を最新化する
+  function refreshPreview() {
+    if (gameState === "gameover") {
       hoverGroupSet.clear();
-      hoverTransferPlan = [];
+      activeTransferPlan = [];
+      isPressPreview = false;
+      return;
+    }
+
+    // スマホ・PC問わず、小さい泡を押し込んでいる最中を最優先でプレビュー表示する
+    if (pressedCell) {
+      hoverGroupSet.clear();
+      if (pressInside && pressedCell.state === "growing" && !pressedCell.chainQueued) {
+        activeTransferPlan = computeAirTransferPlan(pressedCell);
+        isPressPreview = true;
+      } else {
+        // 別マスへ指がずれてキャンセル状態のときはプレビューを消す
+        activeTransferPlan = [];
+        isPressPreview = false;
+      }
+      return;
+    }
+
+    isPressPreview = false;
+    if (!hoverCell) {
+      hoverGroupSet.clear();
+      activeTransferPlan = [];
       return;
     }
     if (hoverCell.state === "critical" || hoverCell.state === "danger") {
       hoverGroupSet = getConnectedCriticalGroup(hoverCell);
-      hoverTransferPlan = [];
+      activeTransferPlan = [];
     } else if (hoverCell.state === "growing") {
       hoverGroupSet.clear();
-      hoverTransferPlan = computeAirTransferPlan(hoverCell);
+      activeTransferPlan = computeAirTransferPlan(hoverCell);
     } else {
       hoverGroupSet.clear();
-      hoverTransferPlan = [];
+      activeTransferPlan = [];
     }
   }
 
   // フレームごとの状態更新
   function update(dt) {
-    // バネ物理（全状態で滑らかに動くようにする）
+    // 押し込み中の泡が何らかの理由でgrowing以外になった場合は安全に解除する
+    if (pressedCell && (pressedCell.state !== "growing" || pressedCell.chainQueued)) {
+      clearPressState();
+    }
+
+    // バネ物理（押し込み中の泡はぐっと凹ませる）
     for (let r = 0; r < GRID_SIZE; r++) {
       for (let c = 0; c < GRID_SIZE; c++) {
         const cell = grid[r][c];
-        const targetScale = cell.state === "popped" ? 0.18 : 1;
-        const stiffness = 170;
+        const isActivelyPressed = pressedCell === cell && pressInside;
+        const targetScale = cell.state === "popped" ? 0.18 : isActivelyPressed ? 0.62 : 1;
+        const stiffness = isActivelyPressed ? 240 : 170;
         const damping = 14;
         const force = (targetScale - cell.scale) * stiffness;
         cell.scaleVel += force * dt;
@@ -690,7 +784,7 @@
     }
 
     if (gameState !== "playing") {
-      refreshHoverPredictions();
+      refreshPreview();
       return;
     }
 
@@ -738,7 +832,8 @@
           continue;
         }
 
-        if (cell.chainQueued) continue;
+        // 連鎖予約済み、または指で押さえつけられている最中の泡は膨張を一時停止する
+        if (cell.chainQueued || (pressedCell === cell && pressInside)) continue;
 
         let spotBoost = 0.78;
         for (const hs of hotspots) {
@@ -786,7 +881,7 @@
       warningTickCooldown = 0;
     }
 
-    refreshHoverPredictions();
+    refreshPreview();
   }
 
   // 盤面と泡を描画する
@@ -809,18 +904,19 @@
         const inset = cellSize * 0.08;
         const w = cellSize - inset * 2;
         const cell = grid[r][c];
-        const isHovered = hoverCell === cell && gameState !== "gameover";
+        const isPressedHere = pressedCell === cell && pressInside && gameState !== "gameover";
+        const isHovered = !pressedCell && hoverCell === cell && gameState !== "gameover";
 
         if (protoMode) {
-          ctx.fillStyle = isHovered ? "#cfcfcf" : "#d9d9d9";
-          ctx.strokeStyle = "#b0b0b0";
-          ctx.lineWidth = 1;
+          ctx.fillStyle = isPressedHere ? "#bebebe" : isHovered ? "#cfcfcf" : "#d9d9d9";
+          ctx.strokeStyle = isPressedHere ? "#333333" : "#b0b0b0";
+          ctx.lineWidth = isPressedHere ? 2 : 1;
           ctx.fillRect(x + inset, y + inset, w, w);
           ctx.strokeRect(x + inset, y + inset, w, w);
         } else {
-          ctx.fillStyle = isHovered ? "#252b38" : "#171b23";
-          ctx.strokeStyle = isHovered ? "#394256" : "#242a36";
-          ctx.lineWidth = 1.2;
+          ctx.fillStyle = isPressedHere ? "#283142" : isHovered ? "#252b38" : "#171b23";
+          ctx.strokeStyle = isPressedHere ? "#6680ad" : isHovered ? "#394256" : "#242a36";
+          ctx.lineWidth = isPressedHere ? 2 : 1.2;
           roundRect(ctx, x + inset, y + inset, w, w, 10);
           ctx.fill();
           ctx.stroke();
@@ -866,23 +962,28 @@
       }
     }
 
-    // 3. 小さい泡ホバー時：どこへ空気が押し出されるかの方向ガイド
-    if (hoverCell && hoverTransferPlan.length > 0 && gameState !== "gameover") {
-      const fromPos = cellCenter(hoverCell.r, hoverCell.c);
-      for (const item of hoverTransferPlan) {
+    // 3. 小さい泡の押し込み中またはホバー時：どこへ空気が押し出されるかの方向ガイド
+    const transferSource = isPressPreview ? pressedCell : hoverCell;
+    if (transferSource && activeTransferPlan.length > 0 && gameState !== "gameover") {
+      const fromPos = cellCenter(transferSource.r, transferSource.c);
+      for (const item of activeTransferPlan) {
         const toPos = cellCenter(item.target.r, item.target.c);
         const isDangerOut = item.outcome === "toDanger" || item.outcome === "dangerAccel";
         const isPromoOut = item.outcome === "toCritical";
 
         const color = protoMode
-          ? isDangerOut ? "#111111" : "#555555"
+          ? isDangerOut ? "#111111" : isPressPreview ? "#333333" : "#555555"
           : isDangerOut
-            ? "rgba(255, 92, 106, 0.85)"
+            ? isPressPreview ? "rgba(255, 92, 106, 0.98)" : "rgba(255, 92, 106, 0.85)"
             : isPromoOut
-              ? "rgba(255, 255, 255, 0.8)"
-              : "rgba(170, 195, 225, 0.45)";
+              ? isPressPreview ? "rgba(255, 255, 255, 0.96)" : "rgba(255, 255, 255, 0.8)"
+              : isPressPreview ? "rgba(185, 212, 245, 0.8)" : "rgba(170, 195, 225, 0.45)";
 
-        drawAirArrow(fromPos.x, fromPos.y, toPos.x, toPos.y, color, isDangerOut || isPromoOut ? 2.2 : 1.5);
+        const arrowWidth = isPressPreview
+          ? isDangerOut || isPromoOut ? 3.2 : 2.4
+          : isDangerOut || isPromoOut ? 2.2 : 1.5;
+
+        drawAirArrow(fromPos.x, fromPos.y, toPos.x, toPos.y, color, arrowWidth, isPressPreview ? 7 : 5.5);
       }
     }
 
@@ -916,9 +1017,9 @@
     const maxBubbleRadius = cellSize * 0.37;
     const minBubbleRadius = cellSize * 0.11;
 
-    // ホバー中の空気押し出し先を高速参照できるようマップ化
+    // 押し込み中／ホバー中の空気押し出し先を高速参照できるようマップ化
     const transferTargetMap = new Map();
-    for (const item of hoverTransferPlan) {
+    for (const item of activeTransferPlan) {
       transferTargetMap.set(item.target, item);
     }
 
@@ -935,9 +1036,16 @@
           continue;
         }
 
+        const isPressedHere = pressedCell === cell && pressInside && gameState !== "gameover";
+        const transferPreview = transferTargetMap.get(cell);
+
         const normP = Math.min(1, Math.max(0, cell.pressure));
         let radius = minBubbleRadius + (maxBubbleRadius - minBubbleRadius) * Math.pow(normP, 0.85);
         radius *= Math.max(0.2, cell.scale);
+        // 押し込みプレビューを受けている隣の泡は、空気が流れ込みかけてわずかに膨らむ
+        if (isPressPreview && transferPreview) {
+          radius *= 1.07;
+        }
 
         let jitterX = 0;
         let jitterY = 0;
@@ -950,18 +1058,23 @@
           const amp = protoMode ? 1.2 : 1.5 + urgency * 2.4;
           jitterX = Math.sin(cell.wobblePhase * 1.7) * amp;
           jitterY = Math.cos(cell.wobblePhase * 2.1) * amp;
+        } else if (isPressPreview && transferPreview && !protoMode) {
+          // 押し出し先が臨界や危険に届く予兆のときは、わずかに震えて注意を引く
+          if (transferPreview.outcome !== "grow") {
+            jitterX = Math.sin(cell.wobblePhase * 2.2) * 1.1;
+            jitterY = Math.cos(cell.wobblePhase * 2.5) * 1.1;
+          }
         }
 
         const cx = pos.x + jitterX;
         const cy = pos.y + jitterY;
         const inHoverGroup = hoverGroupSet.has(cell);
-        const transferPreview = transferTargetMap.get(cell);
 
         if (protoMode) {
           ctx.beginPath();
           ctx.arc(cx, cy, radius, 0, Math.PI * 2);
           if (cell.state === "growing") {
-            ctx.fillStyle = "#9c9c9c";
+            ctx.fillStyle = isPressedHere ? "#666666" : "#9c9c9c";
             ctx.fill();
           } else if (cell.state === "critical") {
             ctx.fillStyle = inHoverGroup ? "#333333" : "#555555";
@@ -978,16 +1091,29 @@
           }
         } else if (cell.state === "growing") {
           const ratio = normP / params.criticalThreshold;
-          const lightness = Math.round(36 + ratio * 18);
+          const lightness = Math.round((isPressedHere ? 28 : 36) + ratio * 18);
           ctx.beginPath();
           ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-          ctx.fillStyle = `hsl(216, 18%, ${lightness}%)`;
+          ctx.fillStyle = `hsl(216, 20%, ${lightness}%)`;
           ctx.fill();
 
-          ctx.beginPath();
-          ctx.arc(cx - radius * 0.28, cy - radius * 0.28, radius * 0.24, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(255, 255, 255, 0.16)";
-          ctx.fill();
+          if (isPressedHere) {
+            // 指でぐっと押し込まれて中央が凹んだリング表現
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius * 0.55, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(10, 14, 22, 0.35)";
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius + 2, 0, Math.PI * 2);
+            ctx.strokeStyle = "rgba(180, 210, 250, 0.7)";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          } else {
+            ctx.beginPath();
+            ctx.arc(cx - radius * 0.28, cy - radius * 0.28, radius * 0.24, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(255, 255, 255, 0.16)";
+            ctx.fill();
+          }
         } else if (cell.state === "critical") {
           ctx.save();
           if (inHoverGroup) {
@@ -1044,26 +1170,28 @@
           ctx.stroke();
         }
 
-        // 空気押し出し先の状態変化プレビュー（臨界到達／危険突入／即自爆の予兆リング）
+        // 空気押し出し先の状態変化プレビュー（押し込み中はさらにくっきり表示）
         if (transferPreview) {
           ctx.save();
           ctx.setLineDash([4, 3]);
           ctx.beginPath();
-          ctx.arc(cx, cy, Math.max(radius + 5, cellSize * 0.33), 0, Math.PI * 2);
+          ctx.arc(cx, cy, Math.max(radius + 5, cellSize * 0.34), 0, Math.PI * 2);
 
           if (transferPreview.willBurst) {
             ctx.strokeStyle = protoMode ? "#000000" : "#ff3b4a";
-            ctx.lineWidth = 3;
+            ctx.lineWidth = isPressPreview ? 3.8 : 3;
             ctx.setLineDash([]);
           } else if (transferPreview.outcome === "toDanger" || transferPreview.outcome === "dangerAccel") {
-            ctx.strokeStyle = protoMode ? "#222222" : "rgba(255, 92, 106, 0.9)";
-            ctx.lineWidth = 2.2;
+            ctx.strokeStyle = protoMode ? "#222222" : "rgba(255, 92, 106, 0.95)";
+            ctx.lineWidth = isPressPreview ? 3 : 2.2;
           } else if (transferPreview.outcome === "toCritical") {
-            ctx.strokeStyle = protoMode ? "#333333" : "rgba(255, 255, 255, 0.9)";
-            ctx.lineWidth = 2.2;
+            ctx.strokeStyle = protoMode ? "#333333" : "rgba(255, 255, 255, 0.95)";
+            ctx.lineWidth = isPressPreview ? 3 : 2.2;
           } else {
-            ctx.strokeStyle = protoMode ? "#777777" : "rgba(170, 195, 225, 0.45)";
-            ctx.lineWidth = 1.4;
+            ctx.strokeStyle = protoMode
+              ? "#666666"
+              : isPressPreview ? "rgba(185, 212, 245, 0.72)" : "rgba(170, 195, 225, 0.45)";
+            ctx.lineWidth = isPressPreview ? 2 : 1.4;
           }
           ctx.stroke();
           ctx.restore();
@@ -1110,7 +1238,7 @@
   }
 
   // 空気の押し出し方向を示す小さな矢印を描くヘルパー
-  function drawAirArrow(x1, y1, x2, y2, color, lineWidth) {
+  function drawAirArrow(x1, y1, x2, y2, color, lineWidth, head = 5.5) {
     const dx = x2 - x1;
     const dy = y2 - y1;
     const dist = Math.hypot(dx, dy);
@@ -1119,11 +1247,10 @@
     const uy = dy / dist;
 
     // セル境界をまたぐ中央部分だけに簡潔な矢印を描く
-    const sx = x1 + ux * (dist * 0.32);
-    const sy = y1 + uy * (dist * 0.32);
-    const ex = x1 + ux * (dist * 0.62);
-    const ey = y1 + uy * (dist * 0.62);
-    const head = 5.5;
+    const sx = x1 + ux * (dist * 0.3);
+    const sy = y1 + uy * (dist * 0.3);
+    const ex = x1 + ux * (dist * 0.64);
+    const ey = y1 + uy * (dist * 0.64);
 
     ctx.save();
     ctx.strokeStyle = color;
@@ -1161,24 +1288,81 @@
     requestAnimationFrame(loop);
   }
 
-  // イベント登録：PointerDownでマウスもタッチも遅延ゼロで反応させる
+  // イベント登録：スマホの「押し込み→離して確定（ずらすとキャンセル）」とPCホバーの両立
   canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     const cell = getCellAtPoint(e.clientX, e.clientY);
-    hoverCell = cell;
-    handleCellPress(cell);
-    refreshHoverPredictions();
+    hoverCell = e.pointerType === "mouse" ? cell : null;
+    handlePointerDownOnCell(cell, e.pointerId);
+    refreshPreview();
   });
 
   canvas.addEventListener("pointermove", (e) => {
-    hoverCell = getCellAtPoint(e.clientX, e.clientY);
-    refreshHoverPredictions();
+    const cell = getCellAtPoint(e.clientX, e.clientY);
+
+    if (activePointerId === e.pointerId && pressedCell) {
+      // 指が押し込んだマスから別マス／外へずれたか監視してキャンセル切替する
+      const nowInside = cell === pressedCell;
+      if (nowInside !== pressInside) {
+        pressInside = nowInside;
+        if (!nowInside) {
+          pressedCell.scaleVel += 4.5;
+          sound.playPressCancel();
+        } else {
+          pressedCell.scaleVel -= 4.0;
+          sound.playPressStart();
+        }
+      }
+      refreshPreview();
+      return;
+    }
+
+    if (e.pointerType === "mouse") {
+      hoverCell = cell;
+      refreshPreview();
+    }
   });
 
-  canvas.addEventListener("pointerleave", () => {
+  canvas.addEventListener("pointerup", (e) => {
+    if (activePointerId !== e.pointerId) return;
+    e.preventDefault();
+    const cell = getCellAtPoint(e.clientX, e.clientY);
+    pressInside = cell === pressedCell;
+    confirmPressedCell();
+    if (e.pointerType !== "mouse") {
+      hoverCell = null;
+    } else {
+      hoverCell = cell;
+    }
+    refreshPreview();
+  });
+
+  canvas.addEventListener("pointercancel", (e) => {
+    if (activePointerId !== e.pointerId) return;
+    if (pressedCell && pressInside) {
+      pressedCell.scaleVel += 4.0;
+    }
+    clearPressState();
     hoverCell = null;
-    hoverGroupSet.clear();
-    hoverTransferPlan = [];
+    refreshPreview();
+  });
+
+  canvas.addEventListener("lostpointercapture", (e) => {
+    if (activePointerId !== e.pointerId) return;
+    clearPressState();
+    refreshPreview();
+  });
+
+  canvas.addEventListener("pointerleave", (e) => {
+    if (e.pointerType === "mouse" && !pressedCell) {
+      hoverCell = null;
+      refreshPreview();
+    }
+  });
+
+  // スマホ長押し時のコンテキストメニュー表示を抑止する
+  canvas.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
   });
 
   gameOverOverlay.addEventListener("pointerdown", (e) => {
