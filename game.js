@@ -87,9 +87,13 @@
   let particles = [];
   let rings = [];
   let beams = [];
-  let airPuffs = []; // 小さい泡から隣へ移動する空気の玉
+  let airPuffs = [];    // 小さい泡から隣へ移動する空気の玉
+  let likeBursts = [];  // 「いいねのはじけ」風の放射スパーク＆ドット
+  let confetti = [];    // 大連鎖や自己ベスト更新を祝う紙吹雪
   let floatTexts = [];
   let shakeMag = 0;
+  let errorShakeTime = 0; // エラー・押し込みすぎ時の水平シェイク経過時間
+  let errorShakeAmp = 0;  // 水平シェイクの振幅
   let warningTickCooldown = 0;
 
   // マウスホバーおよびスマホの押し込み操作状態
@@ -97,9 +101,26 @@
   let activePointerId = null;
   let pressedCell = null;
   let pressInside = false;
+  let pressDragX = 0; // 押し込み中の指とセル中心のX方向ズレ（ラバーバンド用）
+  let pressDragY = 0; // 押し込み中の指とセル中心のY方向ズレ（ラバーバンド用）
   let hoverGroupSet = new Set();
   let activeTransferPlan = [];
   let isPressPreview = false;
+
+  // HUDの数字をスプリングでポヨンと弾ませる
+  function bumpElement(el) {
+    if (protoMode || !el) return;
+    el.classList.remove("bump");
+    void el.offsetWidth;
+    el.classList.add("bump");
+  }
+
+  // エラー・警告用の水平シェイクを発火させる
+  function triggerErrorShake(amp = 7) {
+    if (protoMode) return;
+    errorShakeTime = 0.28;
+    errorShakeAmp = Math.max(errorShakeAmp, amp);
+  }
 
   // 対応スマホ端末でのみ極小バイブレーション（ハプティクス）を鳴らす
   function triggerHaptic(pattern) {
@@ -123,6 +144,8 @@
     activePointerId = null;
     pressedCell = null;
     pressInside = false;
+    pressDragX = 0;
+    pressDragY = 0;
   }
 
   // 膨張の塊を生むための緩やかなホットスポット
@@ -142,15 +165,21 @@
       cooldown: 0,
       growthBias: 0.78 + Math.random() * 0.48,
       chainQueued: false,
-      // バネ物理によるぷにぷに・弾け表現用スケール
+      // バネ物理（サイズとラバーバンド用の2Dオフセット）
       scale: 1,
       scaleVel: 0,
+      offsetX: 0,
+      offsetY: 0,
+      offsetVx: 0,
+      offsetVy: 0,
+      // スタッガー出現用の遅延時間（秒）
+      appearDelay: 0,
       wobblePhase: Math.random() * Math.PI * 2
     };
   }
 
-  // 盤面を初期化する（押し出しによる橋架けと連鎖の両方をすぐ体感できる配置）
-  function resetBoard() {
+  // 盤面を初期化する（スタッガー出現で波紋のように揃う）
+  function resetBoard(originR = 2.5, originC = 2.5) {
     clearPressState();
     grid = [];
     pendingPops = [];
@@ -159,8 +188,12 @@
     rings = [];
     beams = [];
     airPuffs = [];
+    likeBursts = [];
+    confetti = [];
     floatTexts = [];
     shakeMag = 0;
+    errorShakeTime = 0;
+    errorShakeAmp = 0;
     burstCell = null;
     warningTickCooldown = 0;
     elapsed = 0;
@@ -174,7 +207,15 @@
       const row = [];
       for (let c = 0; c < GRID_SIZE; c++) {
         const p = 0.12 + Math.random() * 0.34;
-        row.push(createCell(r, c, p));
+        const cell = createCell(r, c, p);
+        if (!protoMode) {
+          // 起点からの距離に応じて少しずつ時間をずらしてスプリング出現させる（スタッガー）
+          const dist = Math.hypot(r - originR, c - originC);
+          cell.appearDelay = dist * 0.042;
+          cell.scale = 0.01;
+          cell.scaleVel = 0;
+        }
+        row.push(cell);
       }
       grid.push(row);
     }
@@ -204,14 +245,16 @@
 
     gameOverOverlay.classList.add("hidden");
     hintTextEl.classList.remove("hidden-soft");
-    updateHud();
+    updateHud(false, false);
   }
 
-  // HUDの数値を反映する
-  function updateHud() {
+  // HUDの数値を反映し、増加時はスプリング弾みを鳴らす
+  function updateHud(bumpScore = false, bumpChain = false) {
     scoreValueEl.textContent = String(score);
     bestValueEl.textContent = String(bestScore);
     maxChainValueEl.textContent = String(Math.max(sessionMaxChain, bestMaxChain));
+    if (bumpScore) bumpElement(scoreValueEl);
+    if (bumpChain) bumpElement(maxChainValueEl);
   }
 
   // サウンドの有効状態（ユーザー設定かつ非プロトタイプモード）を同期する
@@ -355,6 +398,11 @@
     }
 
     if (cell.state === "popped" || cell.chainQueued) return;
+    // スタッガー出現中のセルをタップされたら即座に表示完了させる
+    if (cell.appearDelay > 0) {
+      cell.appearDelay = 0;
+      cell.scale = 1;
+    }
 
     if (cell.state === "critical" || cell.state === "danger") {
       // 臨界／危険泡は限界まで張っているため、触れた瞬間に遅延ゼロで連鎖破裂させる
@@ -374,6 +422,8 @@
       activePointerId = pointerId;
       pressedCell = cell;
       pressInside = true;
+      pressDragX = 0;
+      pressDragY = 0;
       cell.scaleVel -= 5.0;
       sound.playPressStart();
       triggerHaptic(8);
@@ -482,6 +532,7 @@
             promotedToCritical = true;
             if (!protoMode) {
               spawnRing(dstPos.x, dstPos.y, cellSize * 0.44, "rgba(255, 255, 255, 0.5)", 1.8);
+              spawnLikeBurst(dstPos.x, dstPos.y, cellSize * 0.46, "#ffffff", 6);
             }
           }
         } else {
@@ -492,6 +543,8 @@
 
     if (pushedToDanger) {
       sound.playOverloadPush();
+      // 押し込みすぎて危険状態にした合図の水平シェイク
+      triggerErrorShake(6.5);
     } else if (promotedToCritical) {
       sound.playCharge();
     }
@@ -508,8 +561,10 @@
     activeChains.set(chainId, chainInfo);
 
     const comboNum = chainInfo.count;
+    let chainRecordUpdated = false;
     if (comboNum > sessionMaxChain) {
       sessionMaxChain = comboNum;
+      chainRecordUpdated = true;
       if (sessionMaxChain > bestMaxChain) {
         bestMaxChain = sessionMaxChain;
         localStorage.setItem(STORAGE_KEY_MAX_CHAIN, String(bestMaxChain));
@@ -530,7 +585,7 @@
     score += gained;
     totalPopped += 1;
     checkBestScore();
-    updateHud();
+    updateHud(true, chainRecordUpdated);
 
     // 効果音（連鎖数に応じて音階が上昇）と極小バイブレーション
     sound.playChainPop(comboNum - 1, wasDanger);
@@ -542,7 +597,14 @@
     if (!protoMode) {
       const hueColor = wasDanger ? "#ff7a84" : comboNum >= 5 ? "#8cf4ff" : "#ffffff";
       spawnRing(pos.x, pos.y, cellSize * (0.56 + Math.min(0.28, comboNum * 0.03)), hueColor, wasDanger ? 3.5 : 2.6);
-      spawnParticles(pos.x, pos.y, Math.min(20, 9 + comboNum * 2), hueColor, 150 + comboNum * 16);
+      // 「いいねのはじけ」風の放射スパーク＆ドット
+      spawnLikeBurst(pos.x, pos.y, cellSize * (0.52 + Math.min(0.2, comboNum * 0.025)), hueColor, 8);
+      spawnParticles(pos.x, pos.y, Math.min(18, 7 + comboNum * 2), hueColor, 150 + comboNum * 16);
+
+      // 大連鎖（6連鎖以上の節目）で小さな紙吹雪を舞わせる
+      if (comboNum >= 6 && comboNum % 2 === 0) {
+        spawnConfetti(pos.x, pos.y, 14, 190);
+      }
 
       if (fromCell) {
         const prevPos = cellCenter(fromCell.r, fromCell.c);
@@ -608,16 +670,23 @@
     burstCell = cell;
     pendingPops = [];
     activeChains.clear();
-    gameOverLockUntil = performance.now() + 280;
+    gameOverLockUntil = performance.now() + 300;
 
     sound.playBurst();
     triggerHaptic([30, 30, 50]);
 
+    const pos = cellCenter(cell.r, cell.c);
+    // 丸く広がる切り替え（Circular Reveal）の起点を自爆した泡の位置に合わせる
+    const rx = Math.max(0, Math.min(100, (pos.x / boardSize) * 100));
+    const ry = Math.max(0, Math.min(100, (pos.y / boardSize) * 100));
+    gameOverOverlay.style.setProperty("--reveal-x", `${rx.toFixed(1)}%`);
+    gameOverOverlay.style.setProperty("--reveal-y", `${ry.toFixed(1)}%`);
+
     if (!protoMode) {
-      const pos = cellCenter(cell.r, cell.c);
       spawnRing(pos.x, pos.y, cellSize * 1.4, "#ff4d5a", 5);
+      spawnLikeBurst(pos.x, pos.y, cellSize * 0.95, "#ff4d5a", 10);
       spawnParticles(pos.x, pos.y, 28, "#ff4d5a", 240);
-      shakeMag = 12;
+      triggerErrorShake(13);
     }
 
     finalScoreEl.textContent = String(score);
@@ -628,8 +697,49 @@
     setTimeout(() => {
       if (gameState === "gameover") {
         gameOverOverlay.classList.remove("hidden");
+        // 自己ベスト更新時は祝福のコンフェッティを舞わせる
+        if (isNewBest && !protoMode) {
+          spawnConfetti(boardSize * 0.5, boardSize * 0.42, 38, 280);
+        }
       }
-    }, 180);
+    }, 190);
+  }
+
+  // 「いいねのはじけ」風の放射スパーク＆ドット生成ヘルパー
+  function spawnLikeBurst(x, y, maxRadius, color, count) {
+    likeBursts.push({
+      x,
+      y,
+      maxRadius,
+      color,
+      count,
+      rotation: Math.random() * Math.PI * 2,
+      life: 1
+    });
+  }
+
+  // 祝福のコンフェッティ（紙吹雪）生成ヘルパー
+  function spawnConfetti(x, y, count, speed) {
+    const palette = ["#ffffff", "#8cf4ff", "#ffd166", "#ff6b81", "#a3f7bf", "#c4b5fd"];
+    for (let i = 0; i < count; i++) {
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.7;
+      const spd = speed * (0.45 + Math.random() * 0.85);
+      confetti.push({
+        x,
+        y,
+        vx: Math.cos(angle) * spd,
+        vy: Math.sin(angle) * spd - 45,
+        w: 5 + Math.random() * 4,
+        h: 3 + Math.random() * 2.5,
+        angle: Math.random() * Math.PI * 2,
+        vAngle: (Math.random() - 0.5) * 14,
+        flip: Math.random() * Math.PI * 2,
+        flipSpeed: 7 + Math.random() * 8,
+        color: palette[i % palette.length],
+        life: 1,
+        decay: 0.65 + Math.random() * 0.4
+      });
+    }
   }
 
   // パーティクル生成ヘルパー
@@ -724,27 +834,61 @@
       clearPressState();
     }
 
-    // バネ物理（押し込み中の泡はぐっと凹ませる）
+    // バネ物理（スタッガー出現・押し込み凹み・ラバーバンドの引っ張り＆戻り）
+    const rubberLimit = cellSize * 0.65;
     for (let r = 0; r < GRID_SIZE; r++) {
       for (let c = 0; c < GRID_SIZE; c++) {
         const cell = grid[r][c];
+        // スタッガー出現の遅延カウントダウン
+        if (cell.appearDelay > 0) {
+          cell.appearDelay -= dt;
+          if (cell.appearDelay <= 0) {
+            cell.appearDelay = 0;
+            cell.scale = 0.05;
+            cell.scaleVel = 13.5; // 行きすぎて戻るスプリング出現
+          }
+          continue;
+        }
+
         const isActivelyPressed = pressedCell === cell && pressInside;
         const targetScale = cell.state === "popped" ? 0.18 : isActivelyPressed ? 0.62 : 1;
-        const stiffness = isActivelyPressed ? 240 : 170;
-        const damping = 14;
+        const stiffness = isActivelyPressed ? 240 : 185;
+        const damping = 13.5;
         const force = (targetScale - cell.scale) * stiffness;
         cell.scaleVel += force * dt;
         cell.scaleVel *= Math.max(0, 1 - damping * dt);
         cell.scale += cell.scaleVel * dt;
+
+        // ラバーバンド：押し込み中に指をずらすとゴムのように伸び、キャンセル時にビヨンと戻る
+        let targetOx = 0;
+        let targetOy = 0;
+        if (isActivelyPressed && !protoMode) {
+          targetOx = (pressDragX * 0.45) / (1 + Math.abs(pressDragX) / rubberLimit);
+          targetOy = (pressDragY * 0.45) / (1 + Math.abs(pressDragY) / rubberLimit);
+        }
+        const oStiff = isActivelyPressed ? 260 : 320;
+        const oDamp = isActivelyPressed ? 20 : 11.5;
+        cell.offsetVx += (targetOx - cell.offsetX) * oStiff * dt;
+        cell.offsetVy += (targetOy - cell.offsetY) * oStiff * dt;
+        cell.offsetVx *= Math.max(0, 1 - oDamp * dt);
+        cell.offsetVy *= Math.max(0, 1 - oDamp * dt);
+        cell.offsetX += cell.offsetVx * dt;
+        cell.offsetY += cell.offsetVy * dt;
+
         cell.wobblePhase += dt * (cell.state === "danger" ? 26 : 11);
       }
     }
 
-    // エフェクト更新
+    // エフェクト更新（マイクロ揺れ・水平エラーシェイク）
     if (shakeMag > 0.05) {
       shakeMag *= Math.pow(0.001, dt);
     } else {
       shakeMag = 0;
+    }
+
+    if (errorShakeTime > 0) {
+      errorShakeTime = Math.max(0, errorShakeTime - dt);
+      if (errorShakeTime === 0) errorShakeAmp = 0;
     }
 
     for (let i = particles.length - 1; i >= 0; i--) {
@@ -773,6 +917,26 @@
     for (let i = airPuffs.length - 1; i >= 0; i--) {
       airPuffs[i].progress += dt * 7.2;
       if (airPuffs[i].progress >= 1) airPuffs.splice(i, 1);
+    }
+
+    // 「いいねのはじけ」更新
+    for (let i = likeBursts.length - 1; i >= 0; i--) {
+      likeBursts[i].life -= dt * 3.1;
+      if (likeBursts[i].life <= 0) likeBursts.splice(i, 1);
+    }
+
+    // コンフェッティ（紙吹雪）の重力・空気抵抗・回転更新
+    for (let i = confetti.length - 1; i >= 0; i--) {
+      const cf = confetti[i];
+      cf.vy += 420 * dt;
+      cf.vx *= Math.pow(0.28, dt);
+      cf.vy *= Math.pow(0.55, dt);
+      cf.x += cf.vx * dt;
+      cf.y += cf.vy * dt;
+      cf.angle += cf.vAngle * dt;
+      cf.flip += cf.flipSpeed * dt;
+      cf.life -= cf.decay * dt;
+      if (cf.life <= 0) confetti.splice(i, 1);
     }
 
     for (let i = floatTexts.length - 1; i >= 0; i--) {
@@ -890,10 +1054,21 @@
     const { dangerLimit } = getDifficultyMetrics();
 
     ctx.save();
-    if (!protoMode && shakeMag > 0.1) {
-      const sx = (Math.random() - 0.5) * 2 * shakeMag;
-      const sy = (Math.random() - 0.5) * 2 * shakeMag;
-      ctx.translate(sx, sy);
+    if (!protoMode) {
+      let sx = 0;
+      let sy = 0;
+      if (shakeMag > 0.1) {
+        sx += (Math.random() - 0.5) * 2 * shakeMag;
+        sy += (Math.random() - 0.5) * 2 * shakeMag;
+      }
+      // エラー・押し込みすぎ時の水平シェイク（左右に鋭く震えて止まる）
+      if (errorShakeTime > 0) {
+        const ratio = errorShakeTime / 0.28;
+        sx += Math.sin(errorShakeTime * 72) * errorShakeAmp * ratio;
+      }
+      if (sx !== 0 || sy !== 0) {
+        ctx.translate(sx, sy);
+      }
     }
 
     // 1. グリッドの土台（プチプチシートの窪み）
@@ -929,6 +1104,7 @@
     for (let r = 0; r < GRID_SIZE; r++) {
       for (let c = 0; c < GRID_SIZE; c++) {
         const cell = grid[r][c];
+        if (cell.appearDelay > 0) continue;
         if (cell.state !== "critical" && cell.state !== "danger") continue;
         const p1 = cellCenter(r, c);
 
@@ -939,6 +1115,7 @@
         for (const [nr, nc] of neighbors) {
           if (nr >= GRID_SIZE || nc >= GRID_SIZE) continue;
           const other = grid[nr][nc];
+          if (other.appearDelay > 0) continue;
           if (other.state !== "critical" && other.state !== "danger") continue;
 
           const p2 = cellCenter(nr, nc);
@@ -1028,6 +1205,8 @@
         const cell = grid[r][c];
         const pos = cellCenter(r, c);
 
+        if (cell.appearDelay > 0) continue;
+
         if (cell.state === "popped") {
           ctx.beginPath();
           ctx.arc(pos.x, pos.y, cellSize * 0.08, 0, Math.PI * 2);
@@ -1066,8 +1245,8 @@
           }
         }
 
-        const cx = pos.x + jitterX;
-        const cy = pos.y + jitterY;
+        const cx = pos.x + jitterX + cell.offsetX;
+        const cy = pos.y + jitterY + cell.offsetY;
         const inHoverGroup = hoverGroupSet.has(cell);
 
         if (protoMode) {
@@ -1199,7 +1378,7 @@
       }
     }
 
-    // 6. 拡散リング・パーティクル・ポップアップ文字（通常モード時のみ）
+    // 6. 拡散リング・いいねのはじけ・パーティクル・紙吹雪・ポップアップ文字（通常モード時のみ）
     if (!protoMode) {
       for (const rg of rings) {
         ctx.save();
@@ -1212,6 +1391,45 @@
         ctx.restore();
       }
 
+      // 「いいねのはじけ」風の放射スパーク線＆外周ドット
+      for (const lb of likeBursts) {
+        const t = 1 - Math.max(0, lb.life);
+        const ease = 1 - Math.pow(1 - t, 3);
+        const innerR = lb.maxRadius * (0.32 + ease * 0.52);
+        const outerR = lb.maxRadius * (0.48 + ease * 0.65);
+        const dotR = lb.maxRadius * (0.28 + ease * 0.84);
+
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, lb.life);
+        ctx.strokeStyle = lb.color;
+        ctx.fillStyle = lb.color;
+        ctx.lineWidth = 2.2 * lb.life;
+        ctx.lineCap = "round";
+
+        for (let i = 0; i < lb.count; i++) {
+          const angle = lb.rotation + (Math.PI * 2 * i) / lb.count;
+          const cos = Math.cos(angle);
+          const sin = Math.sin(angle);
+          ctx.beginPath();
+          ctx.moveTo(lb.x + cos * innerR, lb.y + sin * innerR);
+          ctx.lineTo(lb.x + cos * outerR, lb.y + sin * outerR);
+          ctx.stroke();
+
+          // 放射線の間に小さなドットを弾けさせる
+          const dotAngle = angle + Math.PI / lb.count;
+          ctx.beginPath();
+          ctx.arc(
+            lb.x + Math.cos(dotAngle) * dotR,
+            lb.y + Math.sin(dotAngle) * dotR,
+            2.4 * lb.life,
+            0,
+            Math.PI * 2
+          );
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
       for (const p of particles) {
         ctx.save();
         ctx.globalAlpha = Math.max(0, p.life);
@@ -1219,6 +1437,18 @@
         ctx.arc(p.x, p.y, p.radius * p.life, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
         ctx.fill();
+        ctx.restore();
+      }
+
+      // 祝福のコンフェッティ（ひらひら回転しながら落ちる紙吹雪）
+      for (const cf of confetti) {
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, cf.life * 1.4));
+        ctx.translate(cf.x, cf.y);
+        ctx.rotate(cf.angle);
+        ctx.scale(1, Math.cos(cf.flip));
+        ctx.fillStyle = cf.color;
+        ctx.fillRect(-cf.w / 2, -cf.h / 2, cf.w, cf.h);
         ctx.restore();
       }
 
@@ -1301,6 +1531,12 @@
     const cell = getCellAtPoint(e.clientX, e.clientY);
 
     if (activePointerId === e.pointerId && pressedCell) {
+      // ラバーバンド用にセル中心からの指のズレ量を記録する
+      const rect = canvas.getBoundingClientRect();
+      const center = cellCenter(pressedCell.r, pressedCell.c);
+      pressDragX = (e.clientX - rect.left) - center.x;
+      pressDragY = (e.clientY - rect.top) - center.y;
+
       // 指が押し込んだマスから別マス／外へずれたか監視してキャンセル切替する
       const nowInside = cell === pressedCell;
       if (nowInside !== pressInside) {
@@ -1365,20 +1601,31 @@
     e.preventDefault();
   });
 
+  // リザルト画面タップ時：押した位置から丸く閉じて波紋スタッガーで次盤面を展開する
+  function retryFromClientPoint(clientX, clientY) {
+    if (gameState !== "gameover" || performance.now() < gameOverLockUntil) return;
+    sound.unlock();
+    const rect = canvas.getBoundingClientRect();
+    const hasPoint = Number.isFinite(clientX) && Number.isFinite(clientY) && (clientX !== 0 || clientY !== 0);
+    const x = hasPoint ? clientX - rect.left : boardSize * 0.5;
+    const y = hasPoint ? clientY - rect.top : boardSize * 0.5;
+    const rx = Math.max(0, Math.min(100, (x / boardSize) * 100));
+    const ry = Math.max(0, Math.min(100, (y / boardSize) * 100));
+    gameOverOverlay.style.setProperty("--reveal-x", `${rx.toFixed(1)}%`);
+    gameOverOverlay.style.setProperty("--reveal-y", `${ry.toFixed(1)}%`);
+    const originC = Math.max(0, Math.min(GRID_SIZE - 1, (x - pad) / cellSize - 0.5));
+    const originR = Math.max(0, Math.min(GRID_SIZE - 1, (y - pad) / cellSize - 0.5));
+    resetBoard(originR, originC);
+  }
+
   gameOverOverlay.addEventListener("pointerdown", (e) => {
     e.preventDefault();
-    if (performance.now() >= gameOverLockUntil) {
-      sound.unlock();
-      resetBoard();
-    }
+    retryFromClientPoint(e.clientX, e.clientY);
   });
 
   retryBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (performance.now() >= gameOverLockUntil) {
-      sound.unlock();
-      resetBoard();
-    }
+    retryFromClientPoint(e.clientX, e.clientY);
   });
 
   window.addEventListener("keydown", (e) => {
