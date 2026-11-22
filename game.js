@@ -85,7 +85,6 @@
     pressSpeedScale: 1.0,    // 上から迫るプレスの速さ倍率
     airTransferRate: 1.25,   // 小さい泡を潰したときに隣へ押し出される空気量倍率
     criticalThreshold: 0.65, // 臨界（白く光って連鎖可能）になる膨らみ割合
-    overloadPenalty: 52,     // 押し込みすぎ暴発でプレス天井が降下する量（px）
     chainDelayMs: 50         // 連鎖が隣へ伝わる時間間隔（ミリ秒）
   };
 
@@ -112,13 +111,14 @@
   const openRankingFromResultBtn = document.getElementById("openRankingFromResultBtn");
   const shareResultBtn = document.getElementById("shareResultBtn");
   const rankingBtn = document.getElementById("rankingBtn");
+  const helpBtn = document.getElementById("helpBtn");
   const protoToggleBtn = document.getElementById("protoToggleBtn");
   const soundToggleBtn = document.getElementById("soundToggleBtn");
   const tuningToggleBtn = document.getElementById("tuningToggleBtn");
   const tuningPanel = document.getElementById("tuningPanel");
   const resetParamsBtn = document.getElementById("resetParamsBtn");
 
-  // ニックネーム・順位表モーダル要素
+  // ニックネーム・順位表・動くマニュアルモーダル要素
   const nicknameModal = document.getElementById("nicknameModal");
   const nicknameForm = document.getElementById("nicknameForm");
   const nicknameInput = document.getElementById("nicknameInput");
@@ -130,26 +130,41 @@
   const tabScoreBtn = document.getElementById("tabScoreBtn");
   const tabChainBtn = document.getElementById("tabChainBtn");
   const rankingListEl = document.getElementById("rankingList");
+  const tutorialModal = document.getElementById("tutorialModal");
 
   // パラメータ調整スライダー
   const sliders = {
     press: { input: document.getElementById("pressRange"), out: document.getElementById("pressOut") },
     transfer: { input: document.getElementById("transferRange"), out: document.getElementById("transferOut") },
     threshold: { input: document.getElementById("thresholdRange"), out: document.getElementById("thresholdOut") },
-    penalty: { input: document.getElementById("penaltyRange"), out: document.getElementById("penaltyOut") },
     delay: { input: document.getElementById("delayRange"), out: document.getElementById("delayOut") }
   };
 
-  // サウンドエンジンと順位表サービス
+  // サウンドエンジン・順位表・動くマニュアル
   const sound = new window.SoundEngine();
   const leaderboard = new window.LeaderboardService();
+  const tutorial = new window.TutorialPlayer({
+    modal: tutorialModal,
+    canvas: document.getElementById("tutorialCanvas"),
+    badgeEl: document.getElementById("tutorialBadge"),
+    titleEl: document.getElementById("tutorialTitle"),
+    captionEl: document.getElementById("tutorialCaption"),
+    dotsEl: document.getElementById("tutorialDots"),
+    prevBtn: document.getElementById("tutorialPrevBtn"),
+    nextBtn: document.getElementById("tutorialNextBtn"),
+    skipBtn: document.getElementById("tutorialSkipBtn")
+  });
   let activeRankingTab = "score"; // 'score' | 'chain'
   let wasCustomParamsUsed = false; // プレイ中にパラメータ調整を使ったか（公平性判定用）
   let reopenRankingAfterNameEdit = false;
 
-  // 現在モーダル（ニックネーム入力または順位表）が開いているか
+  // 現在モーダル（ニックネーム入力・順位表・動くマニュアル）が開いているか
   function isModalOpen() {
-    return !nicknameModal.classList.contains("hidden") || !rankingModal.classList.contains("hidden");
+    return (
+      !nicknameModal.classList.contains("hidden") ||
+      !rankingModal.classList.contains("hidden") ||
+      !tutorialModal.classList.contains("hidden")
+    );
   }
 
   // パラメータがすべて標準値かどうかを判定する
@@ -158,7 +173,6 @@
       Math.abs(params.pressSpeedScale - DEFAULT_PARAMS.pressSpeedScale) < 0.001 &&
       Math.abs(params.airTransferRate - DEFAULT_PARAMS.airTransferRate) < 0.001 &&
       Math.abs(params.criticalThreshold - DEFAULT_PARAMS.criticalThreshold) < 0.001 &&
-      Math.abs(params.overloadPenalty - DEFAULT_PARAMS.overloadPenalty) < 0.001 &&
       Math.abs(params.chainDelayMs - DEFAULT_PARAMS.chainDelayMs) < 0.001
     );
   }
@@ -945,7 +959,7 @@
       const nextP = target.pressure + item.share;
 
       if (nextP >= 1.0) {
-        // 押し込みすぎによる即時オーバーロード暴発！暴発した泡もペチャンコ玉になり、プレス天井が急降下する
+        // 押し込みすぎによる暴発：せっかく育てた泡がその場でペチャンコ玉に戻り、コンボも途切れる（赤いラインはワープさせない）
         overloadCount += 1;
         target.state = "flat";
         target.pressure = 0;
@@ -953,9 +967,9 @@
         target.scale = 0.45;
         target.scaleVel = 6;
         if (!protoMode) {
-          spawnRing(target.x, target.y, 46, "#ff4d5a", 4);
-          spawnParticles(target.x, target.y, 18, "#ff4d5a", 190);
-          spawnFloatText(target.x, target.y - 8, "OVERLOAD!", "#ff5966", 15);
+          spawnRing(target.x, target.y, 44, "#ff4d5a", 3.8);
+          spawnParticles(target.x, target.y, 16, "#ff4d5a", 180);
+          spawnFloatText(target.x, target.y - 8, "BURST!", "#ff5966", 15);
         }
       } else if (nextP >= params.criticalThreshold) {
         target.pressure = nextP;
@@ -975,18 +989,12 @@
     }
 
     if (overloadCount > 0) {
-      // 暴発ペナルティ：コンボが途切れ、上の赤いプレス天井が一気にドスンと降下して迫る！
+      // 指先で完結するリスク：コンボが途切れ、横シェイクと破裂音でミスを伝える
       comboCount = 0;
       comboTimer = 0;
-      pressY += params.overloadPenalty * overloadCount;
-      pressFlash = 1.0;
-      sound.playBurst();
-      triggerErrorShake(11);
-      triggerHaptic([25, 20, 35]);
-
-      if (core.y - core.radius <= pressY + 3) {
-        triggerGameOver("OVERLOAD CRUSH", core.x, core.y);
-      }
+      sound.playOverloadPush();
+      triggerErrorShake(9);
+      triggerHaptic([20, 20, 25]);
     } else if (promotedToCritical) {
       sound.playCharge();
     }
@@ -1230,8 +1238,9 @@
     comboTimer = 0;
     comboFlash = 0;
     updateContainerGlow(0);
-    gameOverLockUntil = performance.now() + 300;
+    gameOverLockUntil = performance.now() + 760;
     layerBannerEl.classList.add("hidden");
+    pressFlash = 1.0;
 
     sound.playBurst();
     triggerHaptic([35, 30, 55]);
@@ -1244,13 +1253,14 @@
     gameOverOverlay.style.setProperty("--reveal-y", `${ry.toFixed(1)}%`);
 
     if (!protoMode) {
-      spawnRing(worldX, worldY, 54, "#ff4d5a", 5);
-      spawnLikeBurst(worldX, worldY, 44, "#ff4d5a", 10);
+      spawnRing(worldX, worldY, 58, "#ff4d5a", 5);
+      spawnLikeBurst(worldX, worldY, 46, "#ff4d5a", 10);
       spawnParticles(worldX, worldY, 30, "#ff4d5a", 240);
+      spawnFloatText(worldX, worldY - 22, "赤いラインに接触！", "#ff5966", 16);
       triggerErrorShake(13);
     }
 
-    gameOverReasonEl.textContent = reason;
+    gameOverReasonEl.textContent = "赤いラインに接触";
     finalDepthEl.textContent = `${depthMeters}m`;
     finalMetaEl.textContent = isNewBest
       ? `NEW BEST!  /  SCORE ${score}  /  MAX CHAIN ${sessionMaxChain}`
@@ -1287,11 +1297,12 @@
       finalRankEl.textContent = "";
     }
 
+    // 「赤いラインがコアへ触れた現場」をはっきり目視させてからリザルト画面へ切り替える
     setTimeout(() => {
       if (gameState === "gameover") {
         gameOverOverlay.classList.remove("hidden");
       }
-    }, 190);
+    }, 640);
   }
 
   // エフェクト生成ヘルパー群
@@ -2577,28 +2588,45 @@
     }
   }
 
-  // 重力で下へ落ちる光るコアを描画する
+  // 重力で下へ落ちる光るコアを描画する（赤いラインが迫ると赤く警告点滅＋警戒線を表示）
   function drawCore(layer) {
     const cx = core.x;
     const cy = core.y;
     const r = core.radius;
     const pulse = 0.5 + 0.5 * Math.sin(core.pulse);
+    const pressGap = (cy - r) - pressY;
+    const isDangerNear = (gameState === "playing" && pressGap < 85) || gameState === "gameover";
+    const dangerBlink = isDangerNear ? 0.5 + 0.5 * Math.sin(core.pulse * 4.5) : 0;
+
+    // 赤いラインが迫っているときはコアと赤いラインを点線で結び、ピンチを一目で伝える
+    if (isDangerNear && pressGap > -6) {
+      ctx.save();
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(cx, pressY + 4);
+      ctx.lineTo(cx, cy - r - 2);
+      ctx.strokeStyle = protoMode ? "#111111" : `rgba(255, 77, 90, ${(0.55 + dangerBlink * 0.45).toFixed(2)})`;
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+      ctx.restore();
+    }
 
     if (protoMode) {
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = isDangerNear ? "#444444" : "#ffffff";
       ctx.fill();
       ctx.strokeStyle = "#111111";
       ctx.lineWidth = 3;
       ctx.stroke();
     } else {
+      const auraColor = isDangerNear ? "#ff4d5a" : layer.accent;
       ctx.save();
-      ctx.shadowColor = layer.accent;
-      ctx.shadowBlur = 16 + pulse * 8;
+      ctx.shadowColor = auraColor;
+      ctx.shadowBlur = isDangerNear ? 18 + dangerBlink * 14 : 16 + pulse * 8;
       ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fillStyle = layer.accent;
+      ctx.arc(cx, cy, r * (isDangerNear ? 1 + dangerBlink * 0.06 : 1), 0, Math.PI * 2);
+      ctx.fillStyle = auraColor;
       ctx.fill();
       ctx.restore();
 
@@ -2606,6 +2634,14 @@
       ctx.arc(cx, cy, r * 0.64, 0, Math.PI * 2);
       ctx.fillStyle = "#ffffff";
       ctx.fill();
+
+      if (isDangerNear) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r + 5 + dangerBlink * 4, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 77, 90, ${(0.5 + dangerBlink * 0.45).toFixed(2)})`;
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+      }
     }
 
     // 下へ落ちたがっていることを直感的に示す極小の下向き矢印
@@ -2914,6 +2950,9 @@
     if (reopenRankingAfterNameEdit) {
       reopenRankingAfterNameEdit = false;
       openRankingModal();
+    } else if (!tutorial.hasSeen()) {
+      // 初回ニックネーム登録の直後に、動く遊び方マニュアルを一度だけ見せる
+      tutorial.open(0);
     }
   });
 
@@ -3005,6 +3044,11 @@
     openRankingModal();
   });
 
+  helpBtn.addEventListener("click", () => {
+    clearPressState();
+    tutorial.open(0);
+  });
+
   closeRankingBtn.addEventListener("click", () => {
     closeRankingModal();
   });
@@ -3033,8 +3077,9 @@
 
   window.addEventListener("keydown", (e) => {
     if (isModalOpen()) {
-      if (e.key === "Escape" && !rankingModal.classList.contains("hidden")) {
-        closeRankingModal();
+      if (e.key === "Escape") {
+        if (!rankingModal.classList.contains("hidden")) closeRankingModal();
+        if (!tutorialModal.classList.contains("hidden")) tutorial.close();
       }
       return;
     }
@@ -3080,9 +3125,6 @@
     sliders.threshold.input.value = String(threshPct);
     sliders.threshold.out.textContent = `${threshPct}%`;
 
-    sliders.penalty.input.value = String(params.overloadPenalty);
-    sliders.penalty.out.textContent = `${params.overloadPenalty}px`;
-
     sliders.delay.input.value = String(params.chainDelayMs);
     sliders.delay.out.textContent = `${params.chainDelayMs}ms`;
   }
@@ -3113,12 +3155,6 @@
     syncSlidersUI();
   });
 
-  sliders.penalty.input.addEventListener("input", () => {
-    params.overloadPenalty = Number(sliders.penalty.input.value);
-    if (!isDefaultParams()) wasCustomParamsUsed = true;
-    syncSlidersUI();
-  });
-
   sliders.delay.input.addEventListener("input", () => {
     params.chainDelayMs = Number(sliders.delay.input.value);
     if (!isDefaultParams()) wasCustomParamsUsed = true;
@@ -3141,6 +3177,8 @@
   loadRivalMarkers();
   if (!leaderboard.hasNickname()) {
     openNicknameModal(false);
+  } else if (!tutorial.hasSeen()) {
+    tutorial.open(0);
   }
   requestAnimationFrame(loop);
 })();

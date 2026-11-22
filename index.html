@@ -43,10 +43,13 @@
         </div>
       </div>
 
-      <!-- 表に出すボタンは「順位」と「音」だけに絞り、市販アプリ風の佇まいにする -->
+      <!-- 表に出すボタンは「順位」「遊び方」「音」だけに絞り、市販アプリ風の佇まいにする -->
       <div class="controls">
         <button class="icon-btn" id="rankingBtn" type="button" title="オンライン順位表を見る">
           順位
+        </button>
+        <button class="icon-btn" id="helpBtn" type="button" title="動く遊び方マニュアルを見る">
+          ？
         </button>
         <button class="icon-btn" id="soundToggleBtn" type="button" title="効果音切替">
           音 ON
@@ -140,8 +143,32 @@
         </div>
       </div>
 
+      <!-- 動くビジュアル・マニュアルモーダル（初回のみ自動表示、？ボタンからいつでも再表示可能） -->
+      <div class="modal-backdrop hidden" id="tutorialModal" role="dialog" aria-modal="true" aria-labelledby="tutorialTitle">
+        <div class="modal-card tutorial-card">
+          <div class="tutorial-header">
+            <span class="modal-title" id="tutorialBadge">STEP 1 / 3</span>
+            <button class="text-btn" id="tutorialSkipBtn" type="button">スキップ</button>
+          </div>
+          <div class="tutorial-stage">
+            <canvas id="tutorialCanvas"></canvas>
+          </div>
+          <div class="tutorial-copy">
+            <h2 class="tutorial-title" id="tutorialTitle">押して育て、赤×はキャンセル</h2>
+            <p class="modal-desc" id="tutorialCaption"></p>
+          </div>
+          <div class="tutorial-footer">
+            <div class="tutorial-dots" id="tutorialDots"></div>
+            <div class="tutorial-nav">
+              <button class="sub-action-btn small-btn" id="tutorialPrevBtn" type="button">戻る</button>
+              <button class="retry-btn small-btn" id="tutorialNextBtn" type="button">つぎへ →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 開始前のみ表示する一行ガイド -->
-      <p class="hint" id="hintText">小さい泡を押して隣を白く育て、2連鎖以上でペチャンコ玉ごと吹っ飛ばせ。押し込みすぎると暴発して赤ラインが迫る。</p>
+      <p class="hint" id="hintText">小さい泡を押して隣を白く育て、2連鎖以上でコアを落とし続けろ。赤いラインにコアが触れると終了。</p>
     </main>
 
     <!-- 開発・検証ツール（初見プレイヤーが誤タップしないよう最下部に小さく格納） -->
@@ -188,14 +215,6 @@
 
         <label class="param-row">
           <div class="param-head">
-            <span>暴発ペナルティ（プレス降下量）</span>
-            <output id="penaltyOut">52px</output>
-          </div>
-          <input type="range" id="penaltyRange" min="20" max="90" step="4" value="52" />
-        </label>
-
-        <label class="param-row">
-          <div class="param-head">
             <span>連鎖の伝播間隔</span>
             <output id="delayOut">50ms</output>
           </div>
@@ -208,6 +227,7 @@
 
   <script src="audio.js"></script>
   <script src="leaderboard.js"></script>
+  <script src="tutorial.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
