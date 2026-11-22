@@ -71,5 +71,7 @@ begin
 end;
 $$;
 
--- 5. 匿名クライアント（anon）からRPC関数を実行できるよう許可
+-- 5. 匿名クライアント（anon）からランキング閲覧とRPC関数を実行できるよう許可
+grant usage on schema public to anon, authenticated;
+grant select on table public.puchi_leaderboard to anon, authenticated;
 grant execute on function public.submit_puchi_score(text, text, integer, integer, integer) to anon, authenticated;

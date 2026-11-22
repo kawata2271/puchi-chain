@@ -62,13 +62,17 @@
       return clean;
     }
 
-    // 共通のSupabaseリクエストヘッダー
+    // 共通のSupabaseリクエストヘッダー（新Publishableキーと旧anon JWTキーの両方に対応）
     _headers() {
-      return {
+      const headers = {
         "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`
+        apikey: SUPABASE_ANON_KEY
       };
+      // 旧anonキー（JWT形式）の場合のみ Authorization ヘッダーを付与する
+      if (SUPABASE_ANON_KEY.split(".").length === 3) {
+        headers.Authorization = `Bearer ${SUPABASE_ANON_KEY}`;
+      }
+      return headers;
     }
 
     // プレイ結果を送信する（オンライン時はSupabase RPC、未設定時はローカル保存）
