@@ -182,12 +182,14 @@
   let beams = [];
   let airPuffs = [];
   let likeBursts = [];
-  let confetti = [];
   let floatTexts = [];
   let shakeMag = 0;
   let errorShakeTime = 0;
   let errorShakeAmp = 0;
-  let pressFlash = 0; // 暴発でプレスが急降下したときの赤フラッシュ
+  let pressFlash = 0;    // 暴発でプレスが急降下したときの赤フラッシュ
+  let comboFlash = 0;    // 10・20・30・40連鎖時の画面全体フラッシュ強度
+  let comboFlashTier = 0;
+  let auraPhase = 0;     // 銀・金・オーロラ・虹色の光沢流動アニメーション位相
   let warningTickCooldown = 0;
 
   // マウスホバーおよびスマホの押し込み操作状態
@@ -435,13 +437,15 @@
     beams = [];
     airPuffs = [];
     likeBursts = [];
-    confetti = [];
     floatTexts = [];
     shakeMag = 0;
     errorShakeTime = 0;
     errorShakeAmp = 0;
     pressFlash = 0;
+    comboFlash = 0;
+    comboFlashTier = 0;
     warningTickCooldown = 0;
+    updateContainerGlow(0);
 
     applyLayerTheme(LAYERS[0]);
 
@@ -839,13 +843,55 @@
     }
   }
 
-  // 10連鎖ティアごとのアクセントカラーを返す
+  // 10連鎖ティアごとの輝きカラーを返す（銀 → 金 → クリスタルオーロラ → 虹色）
   function getComboTierColor(tier) {
-    const colors = ["#ffffff", "#53d8fb", "#42f5b3", "#ffd166", "#ff75c3", "#c4b5fd"];
-    return colors[Math.min(tier, colors.length - 1)];
+    if (tier <= 0) return "#ffffff";
+    if (tier === 1) return "#dce6f2"; // 10連鎖：銀（シルバー）
+    if (tier === 2) return "#ffd54f"; // 20連鎖：金（ゴールド）
+    if (tier === 3) {
+      // 30連鎖：シアンとマゼンタがゆらめくクリスタル・オーロラ
+      const hue = 195 + Math.sin(auraPhase * 2.2) * 55 + 55;
+      return `hsl(${hue.toFixed(0)}, 95%, 72%)`;
+    }
+    // 40連鎖以降：滑らかに色相が回るレインボー（虹色）
+    const speed = tier >= 5 ? 210 : 130;
+    const hue = (auraPhase * speed) % 360;
+    return `hsl(${hue.toFixed(0)}, 95%, 68%)`;
   }
 
-  // 臨界泡の連鎖破裂（2連鎖以上で継続コンボが積み上がり、10連鎖ごとに音が進化する）
+  // 盤面コンテナの外枠ボーダー＆外周グローをコンボの輝き（銀→金→オーロラ→虹）に同期させる
+  function updateContainerGlow(tier) {
+    if (protoMode || tier <= 0 || gameState === "gameover") {
+      canvasContainer.style.borderColor = "";
+      canvasContainer.style.boxShadow = "";
+      return;
+    }
+
+    if (tier === 1) {
+      // 銀（シルバー）
+      canvasContainer.style.borderColor = "rgba(220, 232, 245, 0.78)";
+      canvasContainer.style.boxShadow = "0 0 22px rgba(210, 226, 245, 0.35), 0 18px 46px rgba(0, 0, 0, 0.36)";
+    } else if (tier === 2) {
+      // 金（ゴールド）
+      canvasContainer.style.borderColor = "rgba(255, 213, 79, 0.9)";
+      canvasContainer.style.boxShadow = "0 0 30px rgba(255, 196, 46, 0.5), 0 0 10px rgba(255, 240, 180, 0.45), 0 18px 46px rgba(0, 0, 0, 0.36)";
+    } else if (tier === 3) {
+      // クリスタル・オーロラ
+      const c1 = getComboTierColor(3);
+      canvasContainer.style.borderColor = c1;
+      canvasContainer.style.boxShadow = `0 0 34px ${c1}, 0 0 14px rgba(130, 240, 255, 0.45), 0 18px 46px rgba(0, 0, 0, 0.36)`;
+    } else {
+      // 40連鎖〜：虹色（レインボー）
+      const hue = (auraPhase * (tier >= 5 ? 210 : 130)) % 360;
+      const c1 = `hsl(${hue.toFixed(0)}, 96%, 65%)`;
+      const c2 = `hsl(${((hue + 120) % 360).toFixed(0)}, 96%, 62%)`;
+      const spread = tier >= 5 ? 48 : 38;
+      canvasContainer.style.borderColor = c1;
+      canvasContainer.style.boxShadow = `0 0 ${spread}px ${c1}, 0 0 ${Math.round(spread * 0.55)}px ${c2}, 0 18px 46px rgba(0, 0, 0, 0.36)`;
+    }
+  }
+
+  // 臨界泡の連鎖破裂（2連鎖以上で継続コンボが積み上がり、10連鎖ごとに音と画面の輝きが進化する）
   function executeChainPop(b, chainId, fromX, fromY) {
     if (gameState !== "playing" || b.dead) return;
 
@@ -882,13 +928,19 @@
     score += gained;
     updateHud(false, true);
 
-    // 10連鎖ごとに音色と和音が進化する破裂音＋10の倍数でマイルストーン和音
+    // 10連鎖ごとに音色と和音が進化する純粋な連鎖音のみを鳴らす
     sound.playChainPop(isRealChain ? comboCount : 1, false);
     if (isMilestone10) {
-      sound.playChainMilestone(tier);
       triggerHaptic([14, 24, 18]);
-      // 10連鎖達成のごほうびとしてプレス天井を少し押し戻す
+      // 10連鎖達成のごほうびとしてプレス天井を少し押し戻し、画面を銀→金→オーロラ→虹へ閃光させる
       pressY = Math.max(cameraY - 120, pressY - 20);
+      comboFlash = 1.0;
+      comboFlashTier = tier;
+    } else if (isRealChain && tier >= 1) {
+      // 10連鎖以上のゾーン中は、連鎖ごとに画面オーラも音に合わせて軽く脈打つ
+      comboFlash = Math.max(comboFlash, Math.min(0.42, 0.16 + tier * 0.06));
+      comboFlashTier = tier;
+      if (localCombo > 1) triggerHaptic(10);
     } else if (localCombo > 1) {
       triggerHaptic(10);
     }
@@ -904,13 +956,6 @@
         spawnLikeBurst(bx, by, br * (1.8 + Math.min(0.7, localCombo * 0.08 + tier * 0.1)), hueColor, isMilestone10 ? 12 : 8);
       }
       spawnParticles(bx, by, isRealChain ? Math.min(22, 8 + localCombo * 2) : 6, hueColor, isRealChain ? 160 + localCombo * 15 : 95);
-
-      // 10連鎖・20連鎖・30連鎖…の節目、および単発6連鎖以上で紙吹雪が舞う
-      if (isMilestone10) {
-        spawnConfetti(bx, by, 24, 235);
-      } else if (localCombo >= 6 && localCombo % 2 === 0) {
-        spawnConfetti(bx, by, 14, 190);
-      }
 
       if (fromX !== null && fromY !== null) {
         beams.push({ x1: fromX, y1: fromY, x2: bx, y2: by, life: 1 });
@@ -1011,17 +1056,13 @@
     }
   }
 
-  // 新しい地層へ突入したときのお祝い演出
+  // 新しい地層へ突入したときの演出
   function showLayerBanner(subText, titleText) {
     layerBannerSubEl.textContent = subText;
     layerBannerTitleEl.textContent = titleText;
     layerBannerEl.classList.remove("hidden");
     sound.playStageClear();
     triggerHaptic([12, 24, 18]);
-
-    if (!protoMode) {
-      spawnConfetti(WORLD_W * 0.5, cameraY + WORLD_H * 0.25, 26, 230);
-    }
 
     if (bannerTimer) clearTimeout(bannerTimer);
     bannerTimer = setTimeout(() => {
@@ -1030,12 +1071,16 @@
     }, 1700);
   }
 
-  // ゲームオーバー処理（プレス圧潰または赤泡自爆）
+  // ゲームオーバー処理（プレス圧潰）
   function triggerGameOver(reason, worldX, worldY) {
     clearPressState();
     gameState = "gameover";
     pendingPops = [];
     activeChains.clear();
+    comboCount = 0;
+    comboTimer = 0;
+    comboFlash = 0;
+    updateContainerGlow(0);
     gameOverLockUntil = performance.now() + 300;
     layerBannerEl.classList.add("hidden");
 
@@ -1065,9 +1110,6 @@
     setTimeout(() => {
       if (gameState === "gameover") {
         gameOverOverlay.classList.remove("hidden");
-        if (isNewBest && !protoMode) {
-          spawnConfetti(WORLD_W * 0.5, cameraY + WORLD_H * 0.42, 38, 270);
-        }
       }
     }, 190);
   }
@@ -1083,30 +1125,6 @@
       rotation: Math.random() * Math.PI * 2,
       life: 1
     });
-  }
-
-  function spawnConfetti(x, y, count, speed) {
-    const layer = LAYERS[currentLayerIndex];
-    const palette = ["#ffffff", layer.accent, "#ffd166", "#ff6b81", "#a3f7bf", "#c4b5fd"];
-    for (let i = 0; i < count; i++) {
-      const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.7;
-      const spd = speed * (0.45 + Math.random() * 0.85);
-      confetti.push({
-        x,
-        y,
-        vx: Math.cos(angle) * spd,
-        vy: Math.sin(angle) * spd - 45,
-        w: 4.5 + Math.random() * 3.5,
-        h: 2.5 + Math.random() * 2.2,
-        angle: Math.random() * Math.PI * 2,
-        vAngle: (Math.random() - 0.5) * 14,
-        flip: Math.random() * Math.PI * 2,
-        flipSpeed: 7 + Math.random() * 8,
-        color: palette[i % palette.length],
-        life: 1,
-        decay: 0.65 + Math.random() * 0.4
-      });
-    }
   }
 
   function spawnParticles(x, y, count, color, speed) {
@@ -1424,6 +1442,12 @@
       pressFlash = Math.max(0, pressFlash - dt * 2.6);
     }
 
+    if (comboFlash > 0) {
+      comboFlash = Math.max(0, comboFlash - dt * 2.4);
+    }
+
+    auraPhase += dt;
+
     if (comboPopScale > 1.001) {
       comboPopScale += (1 - comboPopScale) * Math.min(1, dt * 14);
     } else {
@@ -1439,6 +1463,9 @@
         comboCount = 0;
       }
     }
+
+    // 画面外枠の輝き（銀→金→オーロラ→虹）を現在のコンボ帯域に同期させる
+    updateContainerGlow(Math.floor(comboCount / 10));
 
     for (let i = particles.length - 1; i >= 0; i--) {
       const p = particles[i];
@@ -1471,19 +1498,6 @@
     for (let i = likeBursts.length - 1; i >= 0; i--) {
       likeBursts[i].life -= dt * 3.1;
       if (likeBursts[i].life <= 0) likeBursts.splice(i, 1);
-    }
-
-    for (let i = confetti.length - 1; i >= 0; i--) {
-      const cf = confetti[i];
-      cf.vy += 420 * dt;
-      cf.vx *= Math.pow(0.28, dt);
-      cf.vy *= Math.pow(0.55, dt);
-      cf.x += cf.vx * dt;
-      cf.y += cf.vy * dt;
-      cf.angle += cf.vAngle * dt;
-      cf.flip += cf.flipSpeed * dt;
-      cf.life -= cf.decay * dt;
-      if (cf.life <= 0) confetti.splice(i, 1);
     }
 
     for (let i = floatTexts.length - 1; i >= 0; i--) {
@@ -1790,17 +1804,6 @@
         ctx.restore();
       }
 
-      for (const cf of confetti) {
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, Math.min(1, cf.life * 1.4));
-        ctx.translate(cf.x, cf.y);
-        ctx.rotate(cf.angle);
-        ctx.scale(1, Math.cos(cf.flip));
-        ctx.fillStyle = cf.color;
-        ctx.fillRect(-cf.w / 2, -cf.h / 2, cf.w, cf.h);
-        ctx.restore();
-      }
-
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       for (const ft of floatTexts) {
@@ -1818,10 +1821,147 @@
 
     ctx.restore(); // ワールド座標解除
 
-    // 10. 継続コンボ表示（画面右上・2連鎖以上のときだけ浮かぶ）
+    // 10. 10連鎖ごとに豪華になっていく画面発光オーラ（銀 → 金 → オーロラ → 虹色）
+    drawComboAura();
+
+    // 11. 継続コンボ表示（画面右上・2連鎖以上のときだけ浮かぶ）
     drawComboHud();
 
     ctx.restore(); // 画面揺れ解除
+  }
+
+  // 10連鎖（銀）→ 20連鎖（金）→ 30連鎖（オーロラ）→ 40連鎖〜（虹色）の画面発光演出
+  function drawComboAura() {
+    if (protoMode || gameState === "gameover") return;
+    const activeTier = Math.floor(comboCount / 10);
+    const tier = Math.max(activeTier, comboFlash > 0.02 ? comboFlashTier : 0);
+    if (tier <= 0) return;
+
+    const pulse = 0.5 + 0.5 * Math.sin(auraPhase * (3.5 + tier * 1.4));
+    const baseStrength = activeTier > 0 ? Math.min(1, 0.38 + activeTier * 0.14 + pulse * 0.14) : 0;
+    const flashBoost = comboFlash * 0.72;
+    const strength = Math.min(1, baseStrength + flashBoost);
+    if (strength <= 0.01) return;
+
+    ctx.save();
+
+    // 1. 四辺から内側へ滲む豪華な縁取りグロー（ビネット発光）
+    const edgeDepth = 24 + Math.min(34, tier * 8) + comboFlash * 16;
+    let cTop, cBottom, cLeft, cRight;
+
+    if (tier === 1) {
+      // 10〜19連鎖：澄んだシルバー（銀）
+      cTop = cBottom = cLeft = cRight = `rgba(218, 232, 248, ${(strength * 0.34).toFixed(3)})`;
+    } else if (tier === 2) {
+      // 20〜29連鎖：リッチなゴールド（金）
+      cTop = `rgba(255, 224, 115, ${(strength * 0.42).toFixed(3)})`;
+      cBottom = `rgba(255, 184, 38, ${(strength * 0.42).toFixed(3)})`;
+      cLeft = cRight = `rgba(255, 206, 72, ${(strength * 0.38).toFixed(3)})`;
+    } else if (tier === 3) {
+      // 30〜39連鎖：シアン×マゼンタのクリスタル・オーロラ
+      const h1 = (188 + Math.sin(auraPhase * 2.0) * 28) % 360;
+      const h2 = (305 + Math.cos(auraPhase * 2.0) * 28) % 360;
+      cTop = `hsla(${h1.toFixed(0)}, 95%, 68%, ${(strength * 0.45).toFixed(3)})`;
+      cBottom = `hsla(${h2.toFixed(0)}, 95%, 68%, ${(strength * 0.45).toFixed(3)})`;
+      cLeft = `hsla(${((h1 + h2) * 0.5).toFixed(0)}, 95%, 70%, ${(strength * 0.38).toFixed(3)})`;
+      cRight = `hsla(${h1.toFixed(0)}, 95%, 70%, ${(strength * 0.38).toFixed(3)})`;
+    } else {
+      // 40連鎖〜：四辺が滑らかに回転するフル虹色（レインボー）
+      const speed = tier >= 5 ? 210 : 130;
+      const baseH = (auraPhase * speed) % 360;
+      const alpha = Math.min(0.62, strength * (tier >= 5 ? 0.58 : 0.48));
+      cTop = `hsla(${baseH.toFixed(0)}, 98%, 64%, ${alpha.toFixed(3)})`;
+      cRight = `hsla(${((baseH + 90) % 360).toFixed(0)}, 98%, 64%, ${alpha.toFixed(3)})`;
+      cBottom = `hsla(${((baseH + 180) % 360).toFixed(0)}, 98%, 64%, ${alpha.toFixed(3)})`;
+      cLeft = `hsla(${((baseH + 270) % 360).toFixed(0)}, 98%, 64%, ${alpha.toFixed(3)})`;
+    }
+
+    // 上辺グロー
+    const gTop = ctx.createLinearGradient(0, 0, 0, edgeDepth);
+    gTop.addColorStop(0, cTop);
+    gTop.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = gTop;
+    ctx.fillRect(0, 0, WORLD_W, edgeDepth);
+
+    // 下辺グロー
+    const gBottom = ctx.createLinearGradient(0, WORLD_H, 0, WORLD_H - edgeDepth);
+    gBottom.addColorStop(0, cBottom);
+    gBottom.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = gBottom;
+    ctx.fillRect(0, WORLD_H - edgeDepth, WORLD_W, edgeDepth);
+
+    // 左辺グロー
+    const gLeft = ctx.createLinearGradient(0, 0, edgeDepth, 0);
+    gLeft.addColorStop(0, cLeft);
+    gLeft.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = gLeft;
+    ctx.fillRect(0, 0, edgeDepth, WORLD_H);
+
+    // 右辺グロー
+    const gRight = ctx.createLinearGradient(WORLD_W, 0, WORLD_W - edgeDepth, 0);
+    gRight.addColorStop(0, cRight);
+    gRight.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = gRight;
+    ctx.fillRect(WORLD_W - edgeDepth, 0, edgeDepth, WORLD_H);
+
+    // 2. 盤面内周のメタリック／虹色フレームライン（40連鎖以上は虹色グラデーション枠が輝く！）
+    if (activeTier >= 1) {
+      const frameGrad = ctx.createLinearGradient(
+        Math.cos(auraPhase * 1.8) * WORLD_W * 0.5 + WORLD_W * 0.5,
+        0,
+        Math.sin(auraPhase * 1.8) * WORLD_W * 0.5 + WORLD_W * 0.5,
+        WORLD_H
+      );
+      if (activeTier === 1) {
+        frameGrad.addColorStop(0, "rgba(255, 255, 255, 0.85)");
+        frameGrad.addColorStop(0.5, "rgba(180, 198, 220, 0.35)");
+        frameGrad.addColorStop(1, "rgba(255, 255, 255, 0.8)");
+      } else if (activeTier === 2) {
+        frameGrad.addColorStop(0, "rgba(255, 245, 190, 0.95)");
+        frameGrad.addColorStop(0.5, "rgba(255, 190, 40, 0.55)");
+        frameGrad.addColorStop(1, "rgba(255, 232, 130, 0.95)");
+      } else if (activeTier === 3) {
+        frameGrad.addColorStop(0, "rgba(85, 240, 255, 0.95)");
+        frameGrad.addColorStop(0.5, "rgba(255, 115, 215, 0.85)");
+        frameGrad.addColorStop(1, "rgba(175, 145, 255, 0.95)");
+      } else {
+        const baseH = (auraPhase * (activeTier >= 5 ? 210 : 130)) % 360;
+        frameGrad.addColorStop(0, `hsl(${baseH.toFixed(0)}, 100%, 68%)`);
+        frameGrad.addColorStop(0.25, `hsl(${((baseH + 90) % 360).toFixed(0)}, 100%, 68%)`);
+        frameGrad.addColorStop(0.5, `hsl(${((baseH + 180) % 360).toFixed(0)}, 100%, 68%)`);
+        frameGrad.addColorStop(0.75, `hsl(${((baseH + 270) % 360).toFixed(0)}, 100%, 68%)`);
+        frameGrad.addColorStop(1, `hsl(${baseH.toFixed(0)}, 100%, 68%)`);
+      }
+
+      ctx.strokeStyle = frameGrad;
+      ctx.lineWidth = Math.min(7, 2.5 + activeTier * 0.9 + comboFlash * 2);
+      ctx.strokeRect(2, 2, WORLD_W - 4, WORLD_H - 4);
+    }
+
+    // 3. 10・20・30・40連鎖突破の瞬間の画面全体フラッシュ（銀・金・オーロラ・虹色の閃光）
+    if (comboFlash > 0.01) {
+      const flashAlpha = comboFlash * (tier >= 4 ? 0.28 : 0.2);
+      if (tier >= 4) {
+        const baseH = (auraPhase * 180) % 360;
+        const rg = ctx.createLinearGradient(0, 0, WORLD_W, WORLD_H);
+        rg.addColorStop(0, `hsla(${baseH.toFixed(0)}, 100%, 70%, ${flashAlpha.toFixed(3)})`);
+        rg.addColorStop(0.5, `hsla(${((baseH + 120) % 360).toFixed(0)}, 100%, 70%, ${flashAlpha.toFixed(3)})`);
+        rg.addColorStop(1, `hsla(${((baseH + 240) % 360).toFixed(0)}, 100%, 70%, ${flashAlpha.toFixed(3)})`);
+        ctx.fillStyle = rg;
+      } else if (tier === 3) {
+        const ag = ctx.createLinearGradient(0, 0, WORLD_W, WORLD_H);
+        ag.addColorStop(0, `rgba(90, 240, 255, ${flashAlpha.toFixed(3)})`);
+        ag.addColorStop(1, `rgba(255, 115, 220, ${flashAlpha.toFixed(3)})`);
+        ctx.fillStyle = ag;
+      } else if (tier === 2) {
+        ctx.fillStyle = `rgba(255, 218, 95, ${flashAlpha.toFixed(3)})`;
+      } else {
+        ctx.fillStyle = `rgba(235, 245, 255, ${flashAlpha.toFixed(3)})`;
+      }
+      ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    }
+
+    ctx.restore();
   }
 
   // 継続コンボ数と残り猶予バーを画面右上へ軽快に描画する

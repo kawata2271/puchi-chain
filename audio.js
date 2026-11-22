@@ -204,42 +204,6 @@ class SoundEngine {
     }
   }
 
-  // 10連鎖・20連鎖・30連鎖・40連鎖…の節目に鳴る専用マイルストーン音
-  playChainMilestone(tier) {
-    if (!this.enabled || !this.ctx || tier < 1) return;
-    const now = this.ctx.currentTime;
-    const transpose = Math.pow(2, Math.min(12, (tier - 1) * 2) / 12);
-
-    // 10の位が増えるごとに和音の音数と広がりが豪華になる
-    const chords = [
-      [523.25, 659.25, 783.99],                           // 10連鎖：澄んだ3音キラッ
-      [523.25, 659.25, 783.99, 1046.5],                   // 20連鎖：明るい4音ベル
-      [523.25, 659.25, 783.99, 987.77, 1318.51],          // 30連鎖：クリスタル5音アルペジオ
-      [523.25, 659.25, 783.99, 987.77, 1174.66, 1567.98]  // 40連鎖〜：壮大な6音オーロラ和音
-    ];
-    const notes = chords[Math.min(tier - 1, chords.length - 1)];
-
-    // 40連鎖以上は節目の瞬間に力強い低音ベースも鳴らす
-    if (tier >= 4) {
-      const bass = this.ctx.createOscillator();
-      const bassGain = this.ctx.createGain();
-      bass.type = "sine";
-      bass.frequency.setValueAtTime(130.81 * transpose, now);
-      bassGain.gain.setValueAtTime(0.18, now);
-      bassGain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
-      bass.connect(bassGain);
-      bassGain.connect(this.ctx.destination);
-      bass.start(now);
-      bass.stop(now + 0.38);
-    }
-
-    notes.forEach((n, idx) => {
-      const f = Math.min(4600, n * transpose);
-      const t = now + idx * 0.04;
-      this._playTone(t, f, idx === notes.length - 1 ? "sine" : "triangle", 0.12, 0.34, 1.0);
-    });
-  }
-
   // エンベロープ付き単音再生の共通ヘルパー
   _playTone(startTime, freq, type, volume, duration, pitchMul = 1.0) {
     const osc = this.ctx.createOscillator();

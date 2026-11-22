@@ -236,7 +236,7 @@ body.proto-mode .progress-fill {
   overflow: hidden;
   touch-action: none;
   box-shadow: 0 18px 46px rgba(0, 0, 0, 0.36);
-  transition: background-color 0.7s ease, border-color 0.7s ease;
+  transition: background-color 0.7s ease, border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 body.proto-mode .canvas-container {
