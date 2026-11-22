@@ -170,6 +170,11 @@
   let nextChainId = 1;
   let pendingPops = []; // { bubble, timeLeft, chainId, fromX, fromY }
   let activeChains = new Map();
+  // 連続コンボ管理（2連鎖以上をテンポよく繋ぐと10・20・30・40連鎖と音が進化する）
+  const COMBO_WINDOW = 3.8;
+  let comboCount = 0;
+  let comboTimer = 0;
+  let comboPopScale = 1;
 
   // 視覚エフェクト（通常モード時のみ表示）
   let particles = [];
@@ -422,6 +427,9 @@
     rocks = [];
     pendingPops = [];
     activeChains.clear();
+    comboCount = 0;
+    comboTimer = 0;
+    comboPopScale = 1;
     particles = [];
     rings = [];
     beams = [];
@@ -814,7 +822,9 @@
     }
 
     if (overloadCount > 0) {
-      // 暴発ペナルティ：上の赤いプレス天井が一気にドスンと降下して迫る！
+      // 暴発ペナルティ：コンボが途切れ、上の赤いプレス天井が一気にドスンと降下して迫る！
+      comboCount = 0;
+      comboTimer = 0;
       pressY += params.overloadPenalty * overloadCount;
       pressFlash = 1.0;
       sound.playBurst();
@@ -829,7 +839,13 @@
     }
   }
 
-  // 臨界泡の連鎖破裂（2連鎖以上で周囲のペチャンコ玉と硬い泡を一気に粉砕する！）
+  // 10連鎖ティアごとのアクセントカラーを返す
+  function getComboTierColor(tier) {
+    const colors = ["#ffffff", "#53d8fb", "#42f5b3", "#ffd166", "#ff75c3", "#c4b5fd"];
+    return colors[Math.min(tier, colors.length - 1)];
+  }
+
+  // 臨界泡の連鎖破裂（2連鎖以上で継続コンボが積み上がり、10連鎖ごとに音が進化する）
   function executeChainPop(b, chainId, fromX, fromY) {
     if (gameState !== "playing" || b.dead) return;
 
@@ -841,35 +857,58 @@
     const isRealChain = chainInfo.plannedSize >= 2 || chainInfo.count >= 2;
     activeChains.set(chainId, chainInfo);
 
-    const comboNum = chainInfo.count;
-    if (comboNum > sessionMaxChain) {
-      sessionMaxChain = comboNum;
+    const localCombo = chainInfo.count;
+    let displayCombo = 1;
+    let isMilestone10 = false;
+
+    if (isRealChain) {
+      comboCount += 1;
+      comboTimer = COMBO_WINDOW;
+      comboPopScale = 1.38;
+      displayCombo = comboCount;
+      if (comboCount > sessionMaxChain) {
+        sessionMaxChain = comboCount;
+      }
+      if (comboCount % 10 === 0) {
+        isMilestone10 = true;
+      }
     }
 
     b.dead = true;
     b.chainQueued = false;
 
-    const gained = isRealChain ? comboNum * 3 : 1;
+    const tier = Math.floor(displayCombo / 10);
+    const gained = isRealChain ? localCombo * 3 + tier * 5 : 1;
     score += gained;
     updateHud(false, true);
 
-    sound.playChainPop(comboNum - 1, false);
-    if (comboNum > 1) {
+    // 10連鎖ごとに音色と和音が進化する破裂音＋10の倍数でマイルストーン和音
+    sound.playChainPop(isRealChain ? comboCount : 1, false);
+    if (isMilestone10) {
+      sound.playChainMilestone(tier);
+      triggerHaptic([14, 24, 18]);
+      // 10連鎖達成のごほうびとしてプレス天井を少し押し戻す
+      pressY = Math.max(cameraY - 120, pressY - 20);
+    } else if (localCombo > 1) {
       triggerHaptic(10);
     }
 
     const layer = LAYERS[currentLayerIndex];
 
     if (!protoMode) {
-      const hueColor = comboNum >= 5 ? layer.accent : isRealChain ? "#ffffff" : "rgba(220, 232, 245, 0.8)";
-      const ringScale = isRealChain ? (2.2 + Math.min(0.95, comboNum * 0.11)) : 1.45;
-      spawnRing(bx, by, br * ringScale, hueColor, isRealChain ? 2.6 : 1.6);
+      const tierColor = getComboTierColor(tier);
+      const hueColor = isRealChain ? (tier >= 1 ? tierColor : localCombo >= 5 ? layer.accent : "#ffffff") : "rgba(220, 232, 245, 0.8)";
+      const ringScale = isRealChain ? (2.2 + Math.min(1.1, localCombo * 0.1 + tier * 0.14)) : 1.45;
+      spawnRing(bx, by, br * ringScale, hueColor, isMilestone10 ? 4.0 : isRealChain ? 2.6 : 1.6);
       if (isRealChain) {
-        spawnLikeBurst(bx, by, br * (1.8 + Math.min(0.6, comboNum * 0.08)), hueColor, 8);
+        spawnLikeBurst(bx, by, br * (1.8 + Math.min(0.7, localCombo * 0.08 + tier * 0.1)), hueColor, isMilestone10 ? 12 : 8);
       }
-      spawnParticles(bx, by, isRealChain ? Math.min(18, 7 + comboNum * 2) : 6, hueColor, isRealChain ? 160 + comboNum * 15 : 95);
+      spawnParticles(bx, by, isRealChain ? Math.min(22, 8 + localCombo * 2) : 6, hueColor, isRealChain ? 160 + localCombo * 15 : 95);
 
-      if (comboNum >= 6 && comboNum % 2 === 0) {
+      // 10連鎖・20連鎖・30連鎖…の節目、および単発6連鎖以上で紙吹雪が舞う
+      if (isMilestone10) {
+        spawnConfetti(bx, by, 24, 235);
+      } else if (localCombo >= 6 && localCombo % 2 === 0) {
         spawnConfetti(bx, by, 14, 190);
       }
 
@@ -877,17 +916,24 @@
         beams.push({ x1: fromX, y1: fromY, x2: bx, y2: by, life: 1 });
       }
 
-      const label = comboNum >= 3 ? `${comboNum} CHAIN!` : isRealChain ? `+${gained}` : "+1";
-      spawnFloatText(bx, by - 6, label, hueColor, Math.min(20, 12 + Math.floor(comboNum / 2)));
-      shakeMag = Math.min(8.5, Math.max(shakeMag, isRealChain ? 2.0 + comboNum * 0.5 : 0.8));
+      const label = isMilestone10
+        ? `${comboCount} CHAIN!!`
+        : isRealChain && displayCombo >= 3
+          ? `${displayCombo} CHAIN`
+          : isRealChain
+            ? `+${gained}`
+            : "+1";
+      const textSize = isMilestone10 ? 22 : Math.min(19, 12 + Math.floor(localCombo / 2));
+      spawnFloatText(bx, by - 6, label, hueColor, textSize);
+      shakeMag = Math.min(9.5, Math.max(shakeMag, isMilestone10 ? 7.5 : isRealChain ? 2.0 + localCombo * 0.5 : 0.8));
     }
 
     // 1. 周囲の泡への爆風・ペチャンコ玉粉砕・硬い殻粉砕・連鎖伝播
     const delaySec = params.chainDelayMs / 1000;
     let brokeArmor = false;
     // 2連鎖以上なら大きな爆風でペチャンコ玉と硬い泡を根こそぎ吹っ飛ばす！単発は威力が弱い
-    const flatCrushRange = isRealChain ? br + 44 + Math.min(26, comboNum * 4) : 0;
-    const blastRange = isRealChain ? br + 68 + Math.min(28, comboNum * 4) : br + 24;
+    const flatCrushRange = isRealChain ? br + 44 + Math.min(26, localCombo * 4) : 0;
+    const blastRange = isRealChain ? br + 68 + Math.min(28, localCombo * 4) : br + 24;
 
     for (const other of bubbles) {
       if (other === b || other.dead) continue;
@@ -909,7 +955,7 @@
 
       // 爆風による物理吹き飛ばし
       if (dist < blastRange + other.radius) {
-        const power = (1 - dist / (blastRange + other.radius)) * (isRealChain ? 165 + Math.min(95, comboNum * 12) : 55);
+        const power = (1 - dist / (blastRange + other.radius)) * (isRealChain ? 165 + Math.min(95, localCombo * 12) : 55);
         other.vx += (dx / dist) * power;
         other.vy += (dy / dist) * power;
       }
@@ -960,7 +1006,7 @@
     }
 
     // 3. 大連鎖（4連鎖以上の節目）でプレス天井を少し押し上げるごほうび
-    if (comboNum >= 4 && comboNum % 2 === 0) {
+    if (localCombo >= 4 && localCombo % 2 === 0) {
       pressY = Math.max(cameraY - 120, pressY - 16);
     }
   }
@@ -1378,6 +1424,22 @@
       pressFlash = Math.max(0, pressFlash - dt * 2.6);
     }
 
+    if (comboPopScale > 1.001) {
+      comboPopScale += (1 - comboPopScale) * Math.min(1, dt * 14);
+    } else {
+      comboPopScale = 1;
+    }
+
+    // 継続コンボタイマーの更新（小さい泡を押し込んで仕込み中のあいだは減りを緩やかにする）
+    if (gameState === "playing" && comboTimer > 0 && pendingPops.length === 0) {
+      const drainRate = pressedBubble && pressInside ? 0.5 : 1.0;
+      comboTimer -= dt * drainRate;
+      if (comboTimer <= 0) {
+        comboTimer = 0;
+        comboCount = 0;
+      }
+    }
+
     for (let i = particles.length - 1; i >= 0; i--) {
       const p = particles[i];
       p.x += p.vx * dt;
@@ -1755,7 +1817,56 @@
     drawPressCeiling();
 
     ctx.restore(); // ワールド座標解除
+
+    // 10. 継続コンボ表示（画面右上・2連鎖以上のときだけ浮かぶ）
+    drawComboHud();
+
     ctx.restore(); // 画面揺れ解除
+  }
+
+  // 継続コンボ数と残り猶予バーを画面右上へ軽快に描画する
+  function drawComboHud() {
+    if (comboCount < 2 || gameState === "gameover") return;
+
+    const tier = Math.floor(comboCount / 10);
+    const color = protoMode ? "#111111" : getComboTierColor(tier);
+    const remainRatio = Math.max(0, Math.min(1, comboTimer / COMBO_WINDOW));
+    const x = WORLD_W - 14;
+    const y = 24;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(comboPopScale, comboPopScale);
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+
+    // 背景をうっすら暗くしてプレス天井の上でもくっきり読めるようにする
+    const badgeW = 98;
+    const badgeH = 34;
+    ctx.fillStyle = protoMode ? "rgba(255, 255, 255, 0.85)" : "rgba(10, 14, 22, 0.72)";
+    const bx = -badgeW;
+    const by = -15;
+    const br = 9;
+    ctx.beginPath();
+    ctx.moveTo(bx + br, by);
+    ctx.arcTo(bx + badgeW, by, bx + badgeW, by + badgeH, br);
+    ctx.arcTo(bx + badgeW, by + badgeH, bx, by + badgeH, br);
+    ctx.arcTo(bx, by + badgeH, bx, by, br);
+    ctx.arcTo(bx, by, bx + badgeW, by, br);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.font = "900 17px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillStyle = color;
+    ctx.fillText(`${comboCount} CHAIN`, -8, -1);
+
+    // 次の10連鎖の音進化までの残り時間バー
+    const barW = badgeW - 16;
+    ctx.fillStyle = protoMode ? "rgba(0, 0, 0, 0.14)" : "rgba(255, 255, 255, 0.16)";
+    ctx.fillRect(-badgeW + 8, 11, barW, 3.5);
+    ctx.fillStyle = color;
+    ctx.fillRect(-badgeW + 8 + barW * (1 - remainRatio), 11, barW * remainRatio, 3.5);
+    ctx.restore();
   }
 
   // 深度目盛り線（スクロールのスピード感を視覚化）

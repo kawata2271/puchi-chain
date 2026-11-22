@@ -123,59 +123,141 @@ class SoundEngine {
     osc.stop(now + 0.1);
   }
 
-  // 臨界泡を潰した・連鎖したときの「パチッ＋音階」音
-  playChainPop(comboIndex, isDangerSave) {
+  // 臨界泡を潰した・連鎖したときの「パチッ＋音階」音（10連鎖ごとに音色と和音が進化する）
+  playChainPop(comboCount, isDangerSave = false) {
     if (!this.enabled || !this.ctx) return;
     const now = this.ctx.currentTime;
-    const idx = Math.min(Math.max(0, comboIndex), this.pentatonic.length - 1);
-    const freq = this.pentatonic[idx];
+    const count = Math.max(1, comboCount);
+    const tier = Math.floor(count / 10); // 0: 1〜9, 1: 10〜19, 2: 20〜29, 3: 30〜39, 4+: 40〜
+    const stepInTier = count % 10; // 各10連鎖帯域内のステップ（0は10の倍数の頂点）
 
-    // 1. プチプチの物理的なアタック（低音パンチ＋鋭い破裂ノイズ）
+    // 各10連鎖帯域の中で10段階に駆け上がるペンタトニック（10の倍数は最高到達点）
+    const scaleIndex = stepInTier === 0 ? 9 : stepInTier - 1;
+    const baseScale = [
+      523.25, 587.33, 659.25, 783.99, 880.0,
+      1046.5, 1174.66, 1318.51, 1567.98, 1760.0
+    ];
+    // 10連鎖増えるごとにキーが少しずつ転調して高揚感が増す（耳に痛くない範囲に収める）
+    const transposeSemitones = Math.min(12, tier * 2);
+    const freq = baseScale[scaleIndex] * Math.pow(2, transposeSemitones / 12);
+
+    // 1. プチプチの物理的なアタック（低音クリック＋鋭い破裂ノイズ）
     const clickOsc = this.ctx.createOscillator();
     const clickGain = this.ctx.createGain();
-    clickOsc.type = "triangle";
-    clickOsc.frequency.setValueAtTime(240 + idx * 14, now);
-    clickOsc.frequency.exponentialRampToValueAtTime(70, now + 0.038);
-    clickGain.gain.setValueAtTime(0.22, now);
-    clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.042);
+    clickOsc.type = tier >= 2 ? "sine" : "triangle";
+    clickOsc.frequency.setValueAtTime(240 + scaleIndex * 14 + tier * 22, now);
+    clickOsc.frequency.exponentialRampToValueAtTime(68, now + 0.038);
+    clickGain.gain.setValueAtTime(0.2, now);
+    clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.044);
     clickOsc.connect(clickGain);
     clickGain.connect(this.ctx.destination);
     clickOsc.start(now);
-    clickOsc.stop(now + 0.046);
+    clickOsc.stop(now + 0.048);
 
-    this._playNoiseBurst(now, 2400 + idx * 150, "bandpass", 1.4, 0.22, 0.032);
+    this._playNoiseBurst(now, 2300 + scaleIndex * 140 + tier * 240, "bandpass", 1.4, 0.2, 0.03);
 
-    // 2. 連鎖で駆け上がる澄んだトーン
-    const toneOsc = this.ctx.createOscillator();
-    const toneGain = this.ctx.createGain();
-    toneOsc.type = "triangle";
-    toneOsc.frequency.setValueAtTime(freq, now);
-    // わずかに上ずらせて弾けるニュアンスを足す
-    toneOsc.frequency.exponentialRampToValueAtTime(freq * 1.015, now + 0.06);
+    // 2. Tier 0（1〜9連鎖）：軽快で素朴なトライアングル単音
+    if (tier === 0) {
+      this._playTone(now, freq, "triangle", 0.16, 0.18, 1.015);
+    } else if (tier === 1) {
+      // Tier 1（10〜19連鎖）：澄んだグラスベル＋完全5度の2音ハーモニー
+      this._playTone(now, freq, "sine", 0.16, 0.24, 1.01);
+      this._playTone(now, freq * 1.5, "triangle", 0.095, 0.22, 1.0);
+    } else if (tier === 2) {
+      // Tier 2（20〜29連鎖）：華やかな3和音シンセベル（根音＋長3度＋完全5度）
+      this._playTone(now, freq, "triangle", 0.14, 0.26, 1.01);
+      this._playTone(now, freq * 1.25, "sine", 0.09, 0.25, 1.0);
+      this._playTone(now, freq * 1.5, "sine", 0.09, 0.27, 1.0);
+    } else if (tier === 3) {
+      // Tier 3（30〜39連鎖）：コーラス感のあるクリスタル和音＋追いかける高音シマー
+      this._playTone(now, freq * 0.996, "triangle", 0.11, 0.28, 1.0);
+      this._playTone(now, freq * 1.004, "sine", 0.11, 0.28, 1.0);
+      this._playTone(now, freq * 1.5, "sine", 0.085, 0.28, 1.0);
+      // わずかに遅れて弾ける1オクターブ上の煌めき
+      this._playTone(now + 0.026, Math.min(4200, freq * 2.0), "sine", 0.07, 0.22, 1.0);
+    } else {
+      // Tier 4以降（40連鎖〜）：腹に響くサブベースパンチ＋豊かな4和音オーロラベル＋二重シマー
+      const sub = this.ctx.createOscillator();
+      const subGain = this.ctx.createGain();
+      sub.type = "sine";
+      sub.frequency.setValueAtTime(115, now);
+      sub.frequency.exponentialRampToValueAtTime(48, now + 0.11);
+      subGain.gain.setValueAtTime(0.18, now);
+      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+      sub.connect(subGain);
+      subGain.connect(this.ctx.destination);
+      sub.start(now);
+      sub.stop(now + 0.14);
 
-    const volume = Math.min(0.24, 0.15 + idx * 0.01);
-    toneGain.gain.setValueAtTime(0.001, now);
-    toneGain.gain.linearRampToValueAtTime(volume, now + 0.008);
-    toneGain.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
-
-    toneOsc.connect(toneGain);
-    toneGain.connect(this.ctx.destination);
-    toneOsc.start(now);
-    toneOsc.stop(now + 0.21);
-
-    // 危険状態（赤）をギリギリ救出したときは明るい倍音を重ねる
-    if (isDangerSave) {
-      const shimmer = this.ctx.createOscillator();
-      const shimmerGain = this.ctx.createGain();
-      shimmer.type = "sine";
-      shimmer.frequency.setValueAtTime(freq * 1.5, now);
-      shimmerGain.gain.setValueAtTime(0.09, now);
-      shimmerGain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
-      shimmer.connect(shimmerGain);
-      shimmerGain.connect(this.ctx.destination);
-      shimmer.start(now);
-      shimmer.stop(now + 0.25);
+      this._playTone(now, freq, "triangle", 0.12, 0.3, 1.0);
+      this._playTone(now, freq * 1.25, "sine", 0.08, 0.3, 1.0);
+      this._playTone(now, freq * 1.5, "sine", 0.08, 0.3, 1.0);
+      this._playTone(now + 0.024, Math.min(4400, freq * 1.875), "sine", 0.065, 0.24, 1.0);
+      if (tier >= 5) {
+        // 50連鎖以降はさらに高速スパークル尾引きを重ねる
+        this._playTone(now + 0.052, Math.min(4800, freq * 2.0), "sine", 0.06, 0.24, 1.0);
+      }
     }
+
+    if (isDangerSave) {
+      this._playTone(now, Math.min(4400, freq * 1.5), "sine", 0.08, 0.24, 1.0);
+    }
+  }
+
+  // 10連鎖・20連鎖・30連鎖・40連鎖…の節目に鳴る専用マイルストーン音
+  playChainMilestone(tier) {
+    if (!this.enabled || !this.ctx || tier < 1) return;
+    const now = this.ctx.currentTime;
+    const transpose = Math.pow(2, Math.min(12, (tier - 1) * 2) / 12);
+
+    // 10の位が増えるごとに和音の音数と広がりが豪華になる
+    const chords = [
+      [523.25, 659.25, 783.99],                           // 10連鎖：澄んだ3音キラッ
+      [523.25, 659.25, 783.99, 1046.5],                   // 20連鎖：明るい4音ベル
+      [523.25, 659.25, 783.99, 987.77, 1318.51],          // 30連鎖：クリスタル5音アルペジオ
+      [523.25, 659.25, 783.99, 987.77, 1174.66, 1567.98]  // 40連鎖〜：壮大な6音オーロラ和音
+    ];
+    const notes = chords[Math.min(tier - 1, chords.length - 1)];
+
+    // 40連鎖以上は節目の瞬間に力強い低音ベースも鳴らす
+    if (tier >= 4) {
+      const bass = this.ctx.createOscillator();
+      const bassGain = this.ctx.createGain();
+      bass.type = "sine";
+      bass.frequency.setValueAtTime(130.81 * transpose, now);
+      bassGain.gain.setValueAtTime(0.18, now);
+      bassGain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+      bass.connect(bassGain);
+      bassGain.connect(this.ctx.destination);
+      bass.start(now);
+      bass.stop(now + 0.38);
+    }
+
+    notes.forEach((n, idx) => {
+      const f = Math.min(4600, n * transpose);
+      const t = now + idx * 0.04;
+      this._playTone(t, f, idx === notes.length - 1 ? "sine" : "triangle", 0.12, 0.34, 1.0);
+    });
+  }
+
+  // エンベロープ付き単音再生の共通ヘルパー
+  _playTone(startTime, freq, type, volume, duration, pitchMul = 1.0) {
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, startTime);
+    if (pitchMul !== 1.0) {
+      osc.frequency.exponentialRampToValueAtTime(freq * pitchMul, startTime + Math.min(0.06, duration * 0.4));
+    }
+
+    gain.gain.setValueAtTime(0.001, startTime);
+    gain.gain.linearRampToValueAtTime(volume, startTime + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.02);
   }
 
   // 衝撃波で隣の泡が臨界に押し上がったときの柔らかい「ポコッ」音
