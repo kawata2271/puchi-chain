@@ -110,7 +110,7 @@
       }
     }
 
-    // ランキング上位を取得する（type: 'score' | 'chain'）
+    // ランキング上位を取得する（type: 'score' | 'chain' | 'depth'）
     async fetchRanking(type = "score", limit = 50) {
       if (!this.isOnlineConfigured()) {
         return {
@@ -122,7 +122,9 @@
       const order =
         type === "chain"
           ? "best_chain.desc,best_score.desc,updated_at.asc"
-          : "best_score.desc,best_chain.desc,updated_at.asc";
+          : type === "depth"
+            ? "best_depth.desc,best_score.desc,updated_at.asc"
+            : "best_score.desc,best_chain.desc,updated_at.asc";
 
       try {
         const url = `${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/puchi_leaderboard?select=player_id,nickname,best_score,best_chain,best_depth&order=${encodeURIComponent(order)}&limit=${limit}`;
@@ -196,6 +198,9 @@
       rows.sort((a, b) => {
         if (type === "chain") {
           return (b.best_chain - a.best_chain) || (b.best_score - a.best_score);
+        }
+        if (type === "depth") {
+          return (b.best_depth - a.best_depth) || (b.best_score - a.best_score);
         }
         return (b.best_score - a.best_score) || (b.best_chain - a.best_chain);
       });

@@ -201,6 +201,9 @@
   let core = null;
   let bubbles = [];
   let rocks = [];
+  // 地層内に引く自己ベスト＆オンラインライバルの到達ライン
+  let cachedRivals = [];
+  let depthMarkers = [];
 
   // 進行中の連鎖イベント管理
   let nextChainId = 1;
@@ -516,10 +519,77 @@
       resolveStaticOverlapPass();
     }
 
+    // 自己ベスト＆オンラインライバルの到達ラインを地層内へ配置する
+    buildDepthMarkers();
+
     layerBannerEl.classList.add("hidden");
     gameOverOverlay.classList.add("hidden");
     hintTextEl.classList.remove("hidden-soft");
     updateHud(false, false);
+  }
+
+  // オンライン順位表から地層内に表示するライバル深度を取得してキャッシュする
+  async function loadRivalMarkers() {
+    try {
+      const res = await leaderboard.fetchRanking("depth", 20);
+      if (res && Array.isArray(res.rows)) {
+        cachedRivals = res.rows
+          .map((r, idx) => ({
+            playerId: r && r.player_id,
+            rank: idx + 1,
+            name: (r && r.nickname) || "GUEST",
+            depth: (r && r.best_depth) || 0
+          }))
+          .filter((r) => r.playerId !== leaderboard.playerId && r.depth >= 3);
+        // まだ開始前なら取得したてのライバルラインを即座に盤面へ反映する
+        if (gameState === "ready") {
+          buildDepthMarkers();
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 今回のプレイで地層内に引く到達ライン（自己ベスト＋ライバル最大3本）を構築する
+  function buildDepthMarkers() {
+    const markers = [];
+    const usedDepths = [];
+
+    // 1. 自分の自己ベストライン
+    if (bestDepth >= 3) {
+      markers.push({
+        kind: "self",
+        name: "YOUR BEST",
+        depth: bestDepth,
+        y: startCoreY + bestDepth * PIXELS_PER_METER,
+        label: `★ YOUR BEST ${bestDepth}m`,
+        passed: false,
+        passFlash: 0
+      });
+      usedDepths.push(bestDepth);
+    }
+
+    // 2. オンラインのライバル到達ライン（1位＋重ならない上位/直近ライバル最大3本）
+    const isTooClose = (d) => usedDepths.some((u) => Math.abs(u - d) < 3);
+    let addedRivals = 0;
+
+    for (const rv of cachedRivals) {
+      if (addedRivals >= 3) break;
+      if (isTooClose(rv.depth)) continue;
+      const isTop = rv.rank === 1;
+      markers.push({
+        kind: isTop ? "top" : "rival",
+        name: rv.name,
+        depth: rv.depth,
+        y: startCoreY + rv.depth * PIXELS_PER_METER,
+        label: isTop ? `👑 #1 ${rv.name} ${rv.depth}m` : `#${rv.rank} ${rv.name} ${rv.depth}m`,
+        passed: false,
+        passFlash: 0
+      });
+      usedDepths.push(rv.depth);
+      addedRivals += 1;
+    }
+
+    depthMarkers = markers;
   }
 
   // 初期生成直後の重なりだけを落ち着かせる軽量パス
@@ -1154,6 +1224,7 @@
       const capturedChain = sessionMaxChain;
       const capturedDepth = depthMeters;
       leaderboard.submitScore(capturedScore, capturedChain, capturedDepth).then(() => {
+        loadRivalMarkers();
         return leaderboard.fetchMyRanks();
       }).then((ranks) => {
         if (gameState !== "gameover") return;
@@ -1579,6 +1650,12 @@
       if (ft.life <= 0) floatTexts.splice(i, 1);
     }
 
+    for (const m of depthMarkers) {
+      if (m.passFlash > 0) {
+        m.passFlash = Math.max(0, m.passFlash - dt * 1.4);
+      }
+    }
+
     if (gameState !== "playing") {
       refreshPreview();
       return;
@@ -1630,6 +1707,28 @@
           nextMilestoneDepth += 50;
         }
         updateHud(true, false);
+      }
+    }
+
+    // 自己ベスト・ライバルの到達ラインをコアが突き抜けた瞬間の手応え演出
+    for (const m of depthMarkers) {
+      if (!m.passed && core.y >= m.y) {
+        m.passed = true;
+        m.passFlash = 1.0;
+        sound.playCharge();
+        triggerHaptic(12);
+        if (!protoMode) {
+          const isGold = m.kind === "top" || m.kind === "self";
+          const color = isGold ? "#ffd54f" : "#53d8fb";
+          const msg =
+            m.kind === "top"
+              ? "👑 TOP RECORD!"
+              : m.kind === "self"
+                ? "★ NEW BEST!"
+                : `BEAT ${m.name}!`;
+          spawnRing(core.x, m.y, 44, color, 2.8);
+          spawnFloatText(core.x, core.y - 26, msg, color, m.kind === "top" ? 18 : 16);
+        }
       }
     }
 
@@ -1731,6 +1830,9 @@
 
     // 2. 左右のうねる岩壁と、丸い岩柱（障害物）
     drawWallsAndRocks(layer);
+
+    // 2.5 自己ベスト＆オンラインライバルの到達ライン（泡の後ろにさりげなく表示）
+    drawDepthMarkers(layer);
 
     // 3. 接触している臨界泡同士を繋ぐ白いライン
     ctx.lineCap = "round";
@@ -2077,6 +2179,80 @@
     ctx.fillRect(-badgeW + 8, 11, barW, 3.5);
     ctx.fillStyle = color;
     ctx.fillRect(-badgeW + 8 + barW * (1 - remainRatio), 11, barW * remainRatio, 3.5);
+    ctx.restore();
+  }
+
+  // 地層内に自己ベスト＆オンラインライバルの到達ラインを描画する
+  function drawDepthMarkers(layer) {
+    if (depthMarkers.length === 0) return;
+
+    ctx.save();
+    ctx.font = "800 10px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+
+    for (const m of depthMarkers) {
+      if (m.y < cameraY - 24 || m.y > cameraY + WORLD_H + 24) continue;
+      if (m.passed && m.passFlash <= 0.01) continue;
+
+      const { left, right } = getWallBounds(m.y);
+      const alpha = m.passed ? m.passFlash : 1;
+      const isTop = m.kind === "top";
+      const isSelf = m.kind === "self";
+
+      const strokeColor = protoMode
+        ? `rgba(20, 20, 20, ${(0.55 * alpha).toFixed(3)})`
+        : isTop
+          ? `rgba(255, 213, 79, ${((m.passed ? 0.95 : 0.65) * alpha).toFixed(3)})`
+          : isSelf
+            ? `rgba(255, 232, 145, ${((m.passed ? 0.95 : 0.55) * alpha).toFixed(3)})`
+            : `rgba(110, 224, 255, ${((m.passed ? 0.9 : 0.48) * alpha).toFixed(3)})`;
+
+      // 左右の岩壁の内側いっぱいに点線を引く（突破直後は実線でパッと光る）
+      ctx.save();
+      ctx.beginPath();
+      if (!m.passed) {
+        ctx.setLineDash([5, 4]);
+      }
+      ctx.moveTo(left + 2, m.y);
+      ctx.lineTo(right - 2, m.y);
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = m.passed ? 2.6 : isTop ? 1.8 : 1.4;
+      ctx.stroke();
+      ctx.restore();
+
+      // 左端にコンパクトな到達ラベルタグを配置（右端の10m目盛りと重ならない）
+      const labelText = m.label;
+      const textW = ctx.measureText(labelText).width;
+      const padX = 6;
+      const tagW = textW + padX * 2;
+      const tagH = 16;
+      const tagX = left + 6;
+      const tagY = m.y - tagH - 3;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = protoMode ? "rgba(255, 255, 255, 0.85)" : "rgba(10, 14, 22, 0.72)";
+      ctx.beginPath();
+      ctx.moveTo(tagX + 5, tagY);
+      ctx.arcTo(tagX + tagW, tagY, tagX + tagW, tagY + tagH, 5);
+      ctx.arcTo(tagX + tagW, tagY + tagH, tagX, tagY + tagH, 5);
+      ctx.arcTo(tagX, tagY + tagH, tagX, tagY, 5);
+      ctx.arcTo(tagX, tagY, tagX + tagW, tagY, 5);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = protoMode
+        ? "#111111"
+        : isTop
+          ? "#ffd54f"
+          : isSelf
+            ? "#ffe999"
+            : "#8be4ff";
+      ctx.fillText(labelText, tagX + padX, tagY + tagH * 0.5 + 0.5);
+      ctx.restore();
+    }
+
     ctx.restore();
   }
 
@@ -2822,6 +2998,7 @@
   syncSoundEnabled();
   resizeCanvas();
   resetGame();
+  loadRivalMarkers();
   if (!leaderboard.hasNickname()) {
     openNicknameModal(false);
   }
