@@ -742,12 +742,16 @@
     return result;
   }
 
-  // 現在の深さに応じた難易度パラメータを返す
+  // 現在の深さに応じた難易度パラメータを返す（進めば進むほど上限なく少しずつ速くなる）
   function getDifficultyMetrics() {
-    const progress = Math.min(1, depthMeters / 160);
-    // プレス速度：序盤から油断できないスピードで迫り、深層ほど速くなる
-    const pressSpeed = (19 + progress * 27) * params.pressSpeedScale;
-    return { pressSpeed, progress };
+    const baseSpeed = 16;
+    // 150mまでは10mごとにしっかり加速し、それ以降も上限で止まらず少しずつ速くなり続ける
+    const linearRamp = Math.min(depthMeters, 150) * 0.28;
+    const deepRamp = Math.max(0, depthMeters - 150) * 0.14;
+    const rawSpeed = baseSpeed + linearRamp + deepRamp;
+    const pressSpeed = rawSpeed * params.pressSpeedScale;
+    const speedRatio = rawSpeed / baseSpeed;
+    return { pressSpeed, speedRatio };
   }
 
   // 小さい泡を押し潰したときに、物理的に接している周囲の泡へどれだけ空気が逃げるか計算する
@@ -2653,6 +2657,16 @@
       ctx.lineTo(x + 18, pressY);
       ctx.closePath();
       ctx.fill();
+    }
+
+    // 進めば進むほど速くなっていることを直感的に示す極小スピード表示
+    if (gameState === "playing" && pressY > cameraY + 14) {
+      const { speedRatio } = getDifficultyMetrics();
+      ctx.font = "800 10px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = protoMode ? "#ffffff" : "rgba(255, 240, 242, 0.9)";
+      ctx.fillText(`PRESS ${speedRatio.toFixed(1)}x`, 10, pressY - 5);
     }
     ctx.restore();
   }
