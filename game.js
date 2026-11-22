@@ -368,18 +368,25 @@
       const { left, right } = getWallBounds(y);
       const width = right - left;
 
-      // 深い層では一定間隔で丸い岩柱（障害物）を配置し、ルート分岐を生む
+      // 深い層では一定間隔で丸い岩柱（障害物）を配置（コアが挟まる狭いデッドポケットを絶対に作らない）
       if (layer.rockInterval > 0 && y >= nextRockY) {
-        const rockR = 22 + Math.random() * 10;
-        // 中央寄り、または左右どちらかに偏らせて必ず十分な迂回ルートを空ける
+        const rockR = 20 + Math.random() * 7;
         const lane = Math.random();
         let rx = left + width * 0.5;
-        if (lane < 0.33) {
-          rx = left + rockR + 14;
-        } else if (lane > 0.67) {
-          rx = right - rockR - 14;
+        if (lane < 0.34) {
+          // 左壁と一体化させて張り出し岩棚にし、左側に挟まり隙間を作らない
+          rx = left + rockR * 0.35;
+        } else if (lane > 0.66) {
+          // 右壁と一体化させて張り出し岩棚にし、右側に挟まり隙間を作らない
+          rx = right - rockR * 0.35;
         } else {
-          rx = left + width * (0.38 + Math.random() * 0.24);
+          // 中央に置く場合は左右どちらにもコアが余裕で通れる広い通路を確保する
+          const minMargin = rockR + 62;
+          if (width >= minMargin * 2) {
+            rx = left + minMargin + Math.random() * (width - minMargin * 2);
+          } else {
+            rx = left + rockR * 0.35;
+          }
         }
         rocks.push({ x: rx, y: y + 8, radius: rockR });
         nextRockY = y + layer.rockInterval + (Math.random() - 0.5) * 35;
@@ -412,17 +419,31 @@
         let pressure;
         let armored = false;
         if (depth > 8 && Math.random() < layer.armorChance) {
-          armored = true;
-          pressure = 0.45 + Math.random() * 0.2;
-        } else if (roll < 0.16) {
-          // 最初から臨界（連鎖の起点候補）
-          pressure = Math.min(0.84, params.criticalThreshold + 0.05 + Math.random() * 0.1);
-        } else if (roll < 0.42) {
-          // あとひと押しで臨界になる絶好のターゲット
-          pressure = Math.max(0.48, params.criticalThreshold - 0.14 + Math.random() * 0.11);
-        } else {
-          // 柔らかい小さい泡（空気供給源）
-          pressure = 0.22 + Math.random() * 0.3;
+          // 硬い泡同士が隣り合って物理的な蓋（詰み）を作らないよう距離チェックを入れる
+          let nearOtherArmor = false;
+          for (let k = bubbles.length - 1; k >= Math.max(0, bubbles.length - 24); k--) {
+            const prev = bubbles[k];
+            if (prev.armored && Math.hypot(clampedX - prev.x, by - prev.y) < 76) {
+              nearOtherArmor = true;
+              break;
+            }
+          }
+          if (!nearOtherArmor) {
+            armored = true;
+            pressure = 0.45 + Math.random() * 0.2;
+          }
+        }
+        if (!armored) {
+          if (roll < 0.16) {
+            // 最初から臨界（連鎖の起点候補）
+            pressure = Math.min(0.84, params.criticalThreshold + 0.05 + Math.random() * 0.1);
+          } else if (roll < 0.42) {
+            // あとひと押しで臨界になる絶好のターゲット
+            pressure = Math.max(0.48, params.criticalThreshold - 0.14 + Math.random() * 0.11);
+          } else {
+            // 柔らかい小さい泡（空気供給源）
+            pressure = 0.22 + Math.random() * 0.3;
+          }
         }
 
         const delay = useStagger ? Math.max(0, (by - startCoreY) * 0.00055) : 0;
@@ -463,7 +484,7 @@
       y: startCoreY,
       vx: 0,
       vy: 0,
-      radius: 21,
+      radius: 18, // スリム化して隙間をスルスル転がり落ちやすくする
       pulse: 0
     };
 
@@ -776,6 +797,21 @@
       return;
     }
 
+    // プレイ中に光るコア自身をタップしたときは、通路の中央／空き方向へ軽く揺すって引っかかりを外す
+    if (gameState === "playing" && Math.hypot(wx - core.x, wy - core.y) <= core.radius + 10) {
+      const walls = getWallBounds(core.y + 24);
+      const midX = (walls.left + walls.right) * 0.5;
+      const dir = core.x < midX ? 1 : -1;
+      core.vx += dir * 135;
+      core.vy += 45;
+      sound.playPressStart();
+      triggerHaptic(8);
+      if (!protoMode) {
+        spawnRing(core.x, core.y, core.radius * 1.7, LAYERS[currentLayerIndex].accent, 2);
+      }
+      return;
+    }
+
     const b = getBubbleAtWorld(wx, wy);
     if (!b || b.dead || b.chainQueued) return;
 
@@ -865,7 +901,7 @@
     // 押し潰された小さい泡は消滅せず、空気が抜けたペチャンコ玉（flat）として居座る
     b.state = "flat";
     b.pressure = 0;
-    b.radius = 12;
+    b.radius = 10;
     b.scale = 0.55;
     b.scaleVel = 4.5;
 
@@ -909,7 +945,7 @@
         overloadCount += 1;
         target.state = "flat";
         target.pressure = 0;
-        target.radius = 12;
+        target.radius = 10;
         target.scale = 0.45;
         target.scaleVel = 6;
         if (!protoMode) {
@@ -1432,7 +1468,8 @@
           const overlap = minD - dist;
           const nx = dx / dist;
           const ny = dy / dist;
-          const coreShare = b._fixed ? 1.0 : 0.28;
+          // ペチャンコ玉はコアの重みで押し退けやすくし、1〜2個での引っかかりを防ぐ
+          const coreShare = b._fixed ? 1.0 : b.state === "flat" ? 0.16 : 0.26;
           const bubbleShare = 1.0 - coreShare;
           core.x -= nx * overlap * coreShare;
           core.y -= ny * overlap * coreShare;
@@ -1441,10 +1478,16 @@
           if (ny > 0.3 && core.vy > 0) {
             core.vy *= 0.86;
           }
+          // 泡の真上にバランス静止しそうなときは、通路中央側へわずかに転がす
+          if (iter === 0 && ny > 0.82 && Math.abs(nx) < 0.25) {
+            const w = getWallBounds(core.y + 20);
+            const slideDir = core.x < (w.left + w.right) * 0.5 ? 1 : -1;
+            core.vx += slideDir * 18 * dt;
+          }
         }
       }
 
-      // 岩柱との衝突解決
+      // 岩柱との衝突解決（岩のてっぺんに引っかからず広い通路側へ滑らかに転がり落ちる）
       for (const rk of rocks) {
         if (rk.y < cameraY - 120 || rk.y > cameraY + WORLD_H + 220) continue;
 
@@ -1457,6 +1500,23 @@
           const ov = cMin - d;
           core.x += (cdx / d) * ov;
           core.y += (cdy / d) * ov;
+
+          // コアが岩柱の上半分に乗ったら、左右の空き幅が広い側へコロッと転がり落ちる
+          if (iter === 0 && cdy < 4) {
+            const w = getWallBounds(rk.y);
+            const leftSpace = (rk.x - rk.radius) - w.left;
+            const rightSpace = w.right - (rk.x + rk.radius);
+            let slideDir;
+            if (Math.abs(cdx) > 10) {
+              slideDir = cdx > 0 ? 1 : -1;
+              // 狭い壁側へ落ちそうなときは広い側へ戻す
+              if (slideDir < 0 && leftSpace < core.radius * 2.4) slideDir = 1;
+              if (slideDir > 0 && rightSpace < core.radius * 2.4) slideDir = -1;
+            } else {
+              slideDir = rightSpace >= leftSpace ? 1 : -1;
+            }
+            core.vx += slideDir * 240 * dt;
+          }
         }
 
         for (const b of simBubbles) {
@@ -1494,10 +1554,11 @@
       const coreWalls = getWallBounds(core.y);
       if (core.x - core.radius < coreWalls.left) {
         core.x = coreWalls.left + core.radius;
-        if (core.vx < 0) core.vx *= -0.3;
+        // 壁の張り出し斜面に引っかからないよう中央側へ滑らせる
+        if (core.vx < 35) core.vx = 35;
       } else if (core.x + core.radius > coreWalls.right) {
         core.x = coreWalls.right - core.radius;
-        if (core.vx > 0) core.vx *= -0.3;
+        if (core.vx > -35) core.vx = -35;
       }
       if (core.y + core.radius > activeBottomLimit) {
         core.y = activeBottomLimit - core.radius;
