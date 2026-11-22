@@ -6,7 +6,7 @@
   // Supabase 接続設定（作成後に Project URL と anon public key をここへ設定）
   // 未設定のあいだは端末内ローカル順位表として動作します
   // =========================================================================
-  const SUPABASE_URL = "https://ohrsjiarkuflimhbjazc.supabase.co/rest/v1/";
+  const SUPABASE_URL = "https://ohrsjiarkuflimhbjazc.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_BlS6GZA4tVFzGc17jCP54A_csCVU-VT";
 
   const STORAGE_KEY_PLAYER_ID = "puchi_player_id_v1";
@@ -62,6 +62,12 @@
       return clean;
     }
 
+    // REST API のベースURLを正規化する（末尾の / や /rest/v1 の重複を防ぐ）
+    _restBase() {
+      const cleaned = SUPABASE_URL.trim().replace(/\/+$/, "").replace(/\/rest\/v1$/i, "");
+      return `${cleaned}/rest/v1`;
+    }
+
     // 共通のSupabaseリクエストヘッダー（新Publishableキーと旧anon JWTキーの両方に対応）
     _headers() {
       const headers = {
@@ -90,7 +96,7 @@
       }
 
       try {
-        const res = await fetch(`${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/rpc/submit_puchi_score`, {
+        const res = await fetch(`${this._restBase()}/rpc/submit_puchi_score`, {
           method: "POST",
           headers: this._headers(),
           body: JSON.stringify({
@@ -127,7 +133,7 @@
             : "best_score.desc,best_chain.desc,updated_at.asc";
 
       try {
-        const url = `${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/puchi_leaderboard?select=player_id,nickname,best_score,best_chain,best_depth&order=${encodeURIComponent(order)}&limit=${limit}`;
+        const url = `${this._restBase()}/puchi_leaderboard?select=player_id,nickname,best_score,best_chain,best_depth&order=${encodeURIComponent(order)}&limit=${limit}`;
         const res = await fetch(url, {
           method: "GET",
           headers: this._headers()
