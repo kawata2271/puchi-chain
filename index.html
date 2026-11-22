@@ -26,8 +26,11 @@
       </div>
 
       <div class="controls">
+        <button class="icon-btn" id="rankingBtn" type="button" title="オンライン順位表を見る">
+          順位
+        </button>
         <button class="icon-btn" id="protoToggleBtn" type="button" title="灰色プロトタイプモード切替">
-          プロトタイプ
+          プロト
         </button>
         <button class="icon-btn" id="soundToggleBtn" type="button" title="効果音切替">
           音 ON
@@ -66,7 +69,57 @@
             <div class="overlay-title" id="gameOverReason">CRUSHED</div>
             <div class="overlay-score" id="finalDepth">0m</div>
             <div class="overlay-sub" id="finalMeta">SCORE 0 / MAX CHAIN 0</div>
-            <button class="retry-btn" id="retryBtn" type="button">もう一回（タップ / Space）</button>
+            <div class="overlay-rank" id="finalRank"></div>
+            <div class="overlay-actions">
+              <button class="retry-btn" id="retryBtn" type="button">もう一回</button>
+              <button class="sub-action-btn" id="openRankingFromResultBtn" type="button">順位を見る</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 初回開始時のニックネーム設定モーダル -->
+      <div class="modal-backdrop hidden" id="nicknameModal" role="dialog" aria-modal="true" aria-labelledby="nicknameModalTitle">
+        <form class="modal-card" id="nicknameForm">
+          <div class="modal-title" id="nicknameModalTitle">PLAYER NAME</div>
+          <p class="modal-desc">順位表に表示するニックネームを入力してください（後から変更できます）</p>
+          <input
+            class="text-input"
+            id="nicknameInput"
+            type="text"
+            maxlength="12"
+            placeholder="ニックネーム（12文字まで）"
+            autocomplete="nickname"
+          />
+          <div class="modal-actions">
+            <button class="retry-btn full-btn" type="submit" id="nicknameSubmitBtn">この名前ではじめる</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- オンライン順位表モーダル（最高得点 / 最高連鎖タブ切替） -->
+      <div class="modal-backdrop hidden" id="rankingModal" role="dialog" aria-modal="true" aria-labelledby="rankingModalTitle">
+        <div class="modal-card ranking-card">
+          <div class="ranking-header">
+            <div class="ranking-title-group">
+              <div class="modal-title" id="rankingModalTitle">RANKING</div>
+              <span class="mode-badge" id="rankingModeBadge">LOCAL</span>
+            </div>
+            <button class="close-btn" id="closeRankingBtn" type="button" aria-label="閉じる">✕</button>
+          </div>
+
+          <div class="player-strip">
+            <span class="player-strip-name" id="currentPlayerName">NAME: GUEST</span>
+            <button class="text-btn" id="editNicknameBtn" type="button">名前を変更</button>
+          </div>
+
+          <div class="tab-group" role="tablist">
+            <button class="tab-btn active" id="tabScoreBtn" type="button" role="tab" aria-selected="true">最高得点</button>
+            <button class="tab-btn" id="tabChainBtn" type="button" role="tab" aria-selected="false">最高連鎖</button>
+          </div>
+
+          <div class="ranking-list" id="rankingList">
+            <div class="ranking-empty">読み込み中...</div>
           </div>
         </div>
       </div>
@@ -127,6 +180,7 @@
   </div>
 
   <script src="audio.js"></script>
+  <script src="leaderboard.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

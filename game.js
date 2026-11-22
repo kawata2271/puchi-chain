@@ -107,12 +107,28 @@
   const gameOverReasonEl = document.getElementById("gameOverReason");
   const finalDepthEl = document.getElementById("finalDepth");
   const finalMetaEl = document.getElementById("finalMeta");
+  const finalRankEl = document.getElementById("finalRank");
   const retryBtn = document.getElementById("retryBtn");
+  const openRankingFromResultBtn = document.getElementById("openRankingFromResultBtn");
+  const rankingBtn = document.getElementById("rankingBtn");
   const protoToggleBtn = document.getElementById("protoToggleBtn");
   const soundToggleBtn = document.getElementById("soundToggleBtn");
   const tuningToggleBtn = document.getElementById("tuningToggleBtn");
   const tuningPanel = document.getElementById("tuningPanel");
   const resetParamsBtn = document.getElementById("resetParamsBtn");
+
+  // ニックネーム・順位表モーダル要素
+  const nicknameModal = document.getElementById("nicknameModal");
+  const nicknameForm = document.getElementById("nicknameForm");
+  const nicknameInput = document.getElementById("nicknameInput");
+  const rankingModal = document.getElementById("rankingModal");
+  const rankingModeBadge = document.getElementById("rankingModeBadge");
+  const closeRankingBtn = document.getElementById("closeRankingBtn");
+  const currentPlayerNameEl = document.getElementById("currentPlayerName");
+  const editNicknameBtn = document.getElementById("editNicknameBtn");
+  const tabScoreBtn = document.getElementById("tabScoreBtn");
+  const tabChainBtn = document.getElementById("tabChainBtn");
+  const rankingListEl = document.getElementById("rankingList");
 
   // パラメータ調整スライダー
   const sliders = {
@@ -123,8 +139,28 @@
     delay: { input: document.getElementById("delayRange"), out: document.getElementById("delayOut") }
   };
 
-  // サウンドエンジン
+  // サウンドエンジンと順位表サービス
   const sound = new window.SoundEngine();
+  const leaderboard = new window.LeaderboardService();
+  let activeRankingTab = "score"; // 'score' | 'chain'
+  let wasCustomParamsUsed = false; // プレイ中にパラメータ調整を使ったか（公平性判定用）
+  let reopenRankingAfterNameEdit = false;
+
+  // 現在モーダル（ニックネーム入力または順位表）が開いているか
+  function isModalOpen() {
+    return !nicknameModal.classList.contains("hidden") || !rankingModal.classList.contains("hidden");
+  }
+
+  // パラメータがすべて標準値かどうかを判定する
+  function isDefaultParams() {
+    return (
+      Math.abs(params.pressSpeedScale - DEFAULT_PARAMS.pressSpeedScale) < 0.001 &&
+      Math.abs(params.airTransferRate - DEFAULT_PARAMS.airTransferRate) < 0.001 &&
+      Math.abs(params.criticalThreshold - DEFAULT_PARAMS.criticalThreshold) < 0.001 &&
+      Math.abs(params.overloadPenalty - DEFAULT_PARAMS.overloadPenalty) < 0.001 &&
+      Math.abs(params.chainDelayMs - DEFAULT_PARAMS.chainDelayMs) < 0.001
+    );
+  }
 
   // ローカルストレージから最高到達深度を読み込む
   const STORAGE_KEY_BEST_DEPTH = "puchi_deep_best_depth_v1";
@@ -407,6 +443,8 @@
     depthMeters = 0;
     sessionMaxChain = 0;
     isNewBest = false;
+    wasCustomParamsUsed = !isDefaultParams();
+    finalRankEl.textContent = "";
     currentLayerIndex = 0;
     nextMilestoneDepth = 200;
     worldSeed = Math.random() * Math.PI * 2;
@@ -1107,6 +1145,36 @@
       ? `NEW BEST!  /  SCORE ${score}  /  MAX CHAIN ${sessionMaxChain}`
       : `BEST ${bestDepth}m  /  SCORE ${score}  /  MAX CHAIN ${sessionMaxChain}`;
 
+    // 標準ルールでのプレイのみ順位表へ自動登録し、現在の順位を表示する
+    if (wasCustomParamsUsed || !isDefaultParams()) {
+      finalRankEl.textContent = "カスタム調整のため順位対象外";
+    } else if (score > 0 || sessionMaxChain > 0) {
+      finalRankEl.textContent = "記録を送信中...";
+      const capturedScore = score;
+      const capturedChain = sessionMaxChain;
+      const capturedDepth = depthMeters;
+      leaderboard.submitScore(capturedScore, capturedChain, capturedDepth).then(() => {
+        return leaderboard.fetchMyRanks();
+      }).then((ranks) => {
+        if (gameState !== "gameover") return;
+        const parts = [];
+        if (ranks.scoreRank) parts.push(`得点 ${ranks.scoreRank}位`);
+        if (ranks.chainRank) parts.push(`連鎖 ${ranks.chainRank}位`);
+        if (parts.length > 0) {
+          const suffix = ranks.mode === "online" ? "" : "（端末内）";
+          finalRankEl.textContent = `${leaderboard.getNickname()}：${parts.join(" / ")}${suffix}`;
+        } else {
+          finalRankEl.textContent = "";
+        }
+      }).catch(() => {
+        if (gameState === "gameover") {
+          finalRankEl.textContent = "";
+        }
+      });
+    } else {
+      finalRankEl.textContent = "";
+    }
+
     setTimeout(() => {
       if (gameState === "gameover") {
         gameOverOverlay.classList.remove("hidden");
@@ -1368,6 +1436,9 @@
 
   // フレームごとの状態更新
   function update(dt) {
+    // ニックネーム入力や順位表を開いているあいだは安全に一時停止する
+    if (isModalOpen()) return;
+
     if (pressedBubble && (pressedBubble.dead || pressedBubble.armored || pressedBubble.state !== "growing" || pressedBubble.chainQueued)) {
       clearPressState();
     }
@@ -2481,6 +2552,8 @@
   }
 
   gameOverOverlay.addEventListener("pointerdown", (e) => {
+    // 「順位を見る」ボタンが押された場合はリトライしない
+    if (e.target && e.target.closest("#openRankingFromResultBtn")) return;
     e.preventDefault();
     retryFromClientPoint(e.clientX, e.clientY);
   });
@@ -2490,7 +2563,167 @@
     retryFromClientPoint(e.clientX, e.clientY);
   });
 
+  openRankingFromResultBtn.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+  });
+
+  openRankingFromResultBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openRankingModal();
+  });
+
+  // ニックネーム入力モーダルを開く
+  function openNicknameModal(fromRanking = false) {
+    reopenRankingAfterNameEdit = fromRanking;
+    rankingModal.classList.add("hidden");
+    nicknameInput.value = leaderboard.hasNickname() ? leaderboard.getNickname() : "";
+    nicknameModal.classList.remove("hidden");
+    setTimeout(() => {
+      nicknameInput.focus();
+      nicknameInput.select();
+    }, 60);
+  }
+
+  // ニックネーム確定時の処理
+  nicknameForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const saved = leaderboard.setNickname(nicknameInput.value);
+    currentPlayerNameEl.textContent = `NAME: ${saved}`;
+    nicknameModal.classList.add("hidden");
+    sound.unlock();
+
+    // すでにプレイ記録がある場合のみ、オンライン側の表示名も同期更新する（未プレイ0点登録を防ぐ）
+    if (leaderboard.isOnlineConfigured() && (bestDepth > 0 || score > 0 || sessionMaxChain > 0)) {
+      leaderboard.submitScore(0, 0, 0).catch(() => {});
+    }
+
+    if (reopenRankingAfterNameEdit) {
+      reopenRankingAfterNameEdit = false;
+      openRankingModal();
+    }
+  });
+
+  // 順位表モーダルを開いて最新データを取得・描画する
+  async function openRankingModal() {
+    clearPressState();
+    currentPlayerNameEl.textContent = `NAME: ${leaderboard.getNickname()}`;
+    rankingModal.classList.remove("hidden");
+    await refreshRankingList();
+  }
+
+  function closeRankingModal() {
+    rankingModal.classList.add("hidden");
+  }
+
+  // 指定タブ（最高得点 / 最高連鎖）の順位表を描画する
+  async function refreshRankingList() {
+    tabScoreBtn.classList.toggle("active", activeRankingTab === "score");
+    tabScoreBtn.setAttribute("aria-selected", String(activeRankingTab === "score"));
+    tabChainBtn.classList.toggle("active", activeRankingTab === "chain");
+    tabChainBtn.setAttribute("aria-selected", String(activeRankingTab === "chain"));
+
+    rankingListEl.textContent = "";
+    const loading = document.createElement("div");
+    loading.className = "ranking-empty";
+    loading.textContent = "読み込み中...";
+    rankingListEl.appendChild(loading);
+
+    const res = await leaderboard.fetchRanking(activeRankingTab, 50);
+    rankingModeBadge.textContent = res.mode === "online" ? "ONLINE" : "LOCAL";
+    rankingModeBadge.classList.toggle("online", res.mode === "online");
+
+    rankingListEl.textContent = "";
+    if (!res.rows || res.rows.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "ranking-empty";
+      empty.textContent = "まだ記録がありません。最初の1位を目指そう！";
+      rankingListEl.appendChild(empty);
+      return;
+    }
+
+    res.rows.forEach((row, idx) => {
+      const rank = idx + 1;
+      const item = document.createElement("div");
+      item.className = "ranking-row";
+      if (row.player_id === leaderboard.playerId) {
+        item.classList.add("is-me");
+      }
+
+      const rankEl = document.createElement("div");
+      rankEl.className = "rank-num";
+      if (rank === 1) rankEl.classList.add("top1");
+      else if (rank === 2) rankEl.classList.add("top2");
+      else if (rank === 3) rankEl.classList.add("top3");
+      rankEl.textContent = String(rank);
+
+      const infoEl = document.createElement("div");
+      infoEl.className = "rank-info";
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "rank-name";
+      nameEl.textContent = row.nickname || "GUEST";
+
+      const subEl = document.createElement("div");
+      subEl.className = "rank-sub";
+      subEl.textContent =
+        activeRankingTab === "chain"
+          ? `SCORE ${row.best_score || 0} · DEPTH ${row.best_depth || 0}m`
+          : `MAX CHAIN ${row.best_chain || 0} · DEPTH ${row.best_depth || 0}m`;
+
+      infoEl.appendChild(nameEl);
+      infoEl.appendChild(subEl);
+
+      const valEl = document.createElement("div");
+      valEl.className = "rank-main-val";
+      valEl.textContent =
+        activeRankingTab === "chain"
+          ? `${row.best_chain || 0} 連鎖`
+          : `${row.best_score || 0} pt`;
+
+      item.appendChild(rankEl);
+      item.appendChild(infoEl);
+      item.appendChild(valEl);
+      rankingListEl.appendChild(item);
+    });
+  }
+
+  rankingBtn.addEventListener("click", () => {
+    openRankingModal();
+  });
+
+  closeRankingBtn.addEventListener("click", () => {
+    closeRankingModal();
+  });
+
+  rankingModal.addEventListener("click", (e) => {
+    if (e.target === rankingModal) {
+      closeRankingModal();
+    }
+  });
+
+  editNicknameBtn.addEventListener("click", () => {
+    openNicknameModal(true);
+  });
+
+  tabScoreBtn.addEventListener("click", () => {
+    if (activeRankingTab === "score") return;
+    activeRankingTab = "score";
+    refreshRankingList();
+  });
+
+  tabChainBtn.addEventListener("click", () => {
+    if (activeRankingTab === "chain") return;
+    activeRankingTab = "chain";
+    refreshRankingList();
+  });
+
   window.addEventListener("keydown", (e) => {
+    if (isModalOpen()) {
+      if (e.key === "Escape" && !rankingModal.classList.contains("hidden")) {
+        closeRankingModal();
+      }
+      return;
+    }
     if (e.code === "Space" || e.code === "Enter") {
       if (gameState === "gameover" && performance.now() >= gameOverLockUntil) {
         e.preventDefault();
@@ -2540,16 +2773,19 @@
 
   sliders.press.input.addEventListener("input", () => {
     params.pressSpeedScale = Number(sliders.press.input.value);
+    if (!isDefaultParams()) wasCustomParamsUsed = true;
     syncSlidersUI();
   });
 
   sliders.transfer.input.addEventListener("input", () => {
     params.airTransferRate = Number(sliders.transfer.input.value);
+    if (!isDefaultParams()) wasCustomParamsUsed = true;
     syncSlidersUI();
   });
 
   sliders.threshold.input.addEventListener("input", () => {
     params.criticalThreshold = Number(sliders.threshold.input.value) / 100;
+    if (!isDefaultParams()) wasCustomParamsUsed = true;
     for (const b of bubbles) {
       if (b.dead || b.armored || b.state === "flat") continue;
       if (b.state === "growing" && b.pressure >= params.criticalThreshold) {
@@ -2563,16 +2799,19 @@
 
   sliders.penalty.input.addEventListener("input", () => {
     params.overloadPenalty = Number(sliders.penalty.input.value);
+    if (!isDefaultParams()) wasCustomParamsUsed = true;
     syncSlidersUI();
   });
 
   sliders.delay.input.addEventListener("input", () => {
     params.chainDelayMs = Number(sliders.delay.input.value);
+    if (!isDefaultParams()) wasCustomParamsUsed = true;
     syncSlidersUI();
   });
 
   resetParamsBtn.addEventListener("click", () => {
     Object.assign(params, DEFAULT_PARAMS);
+    if (gameState === "ready") wasCustomParamsUsed = false;
     syncSlidersUI();
   });
 
@@ -2583,5 +2822,8 @@
   syncSoundEnabled();
   resizeCanvas();
   resetGame();
+  if (!leaderboard.hasNickname()) {
+    openNicknameModal(false);
+  }
   requestAnimationFrame(loop);
 })();
