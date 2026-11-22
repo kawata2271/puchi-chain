@@ -6,8 +6,8 @@
   // Supabase 接続設定（作成後に Project URL と anon public key をここへ設定）
   // 未設定のあいだは端末内ローカル順位表として動作します
   // =========================================================================
-  const SUPABASE_URL = "";
-  const SUPABASE_ANON_KEY = "";
+  const SUPABASE_URL = "https://ohrsjiarkuflimhbjazc.supabase.co/rest/v1/";
+  const SUPABASE_ANON_KEY = "sb_publishable_BlS6GZA4tVFzGc17jCP54A_csCVU-VT";
 
   const STORAGE_KEY_PLAYER_ID = "puchi_player_id_v1";
   const STORAGE_KEY_NICKNAME = "puchi_nickname_v1";
