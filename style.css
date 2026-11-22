@@ -504,6 +504,18 @@ body.proto-mode .tuning-panel {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.overlay-actions .retry-btn {
+  min-width: 184px;
+}
+
+.overlay-sub-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -513,12 +525,55 @@ body.proto-mode .tuning-panel {
   border: 1px solid var(--surface-border);
   background: var(--btn-bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 700;
-  padding: 11px 18px;
+  padding: 9px 15px;
   border-radius: 999px;
   cursor: pointer;
-  transition: transform 0.1s ease, background-color 0.15s ease;
+  transition: transform 0.1s ease, background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.sub-action-btn.copied {
+  border-color: var(--theme-accent);
+  color: var(--theme-accent);
+}
+
+/* 最下部の控えめな開発・検証ツール導線 */
+.dev-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.dev-toggle-link {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.55;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.dev-toggle-link:hover,
+.dev-toggle-link.active {
+  opacity: 1;
+  color: var(--text);
+}
+
+.dev-footer .tuning-panel {
+  width: 100%;
+}
+
+.tuning-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 body.proto-mode .sub-action-btn {

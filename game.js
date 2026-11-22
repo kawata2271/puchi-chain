@@ -110,6 +110,7 @@
   const finalRankEl = document.getElementById("finalRank");
   const retryBtn = document.getElementById("retryBtn");
   const openRankingFromResultBtn = document.getElementById("openRankingFromResultBtn");
+  const shareResultBtn = document.getElementById("shareResultBtn");
   const rankingBtn = document.getElementById("rankingBtn");
   const protoToggleBtn = document.getElementById("protoToggleBtn");
   const soundToggleBtn = document.getElementById("soundToggleBtn");
@@ -2728,8 +2729,8 @@
   }
 
   gameOverOverlay.addEventListener("pointerdown", (e) => {
-    // 「順位を見る」ボタンが押された場合はリトライしない
-    if (e.target && e.target.closest("#openRankingFromResultBtn")) return;
+    // 「順位を見る」「結果をシェア」ボタンが押された場合はリトライしない
+    if (e.target && e.target.closest("#openRankingFromResultBtn, #shareResultBtn")) return;
     e.preventDefault();
     retryFromClientPoint(e.clientX, e.clientY);
   });
@@ -2746,6 +2747,68 @@
   openRankingFromResultBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     openRankingModal();
+  });
+
+  // プレイ結果をSNSやLINEへ共有（Web Share API優先、非対応環境はクリップボードへコピー）
+  function showCopiedFeedback() {
+    shareResultBtn.textContent = "コピーしました ✓";
+    shareResultBtn.classList.add("copied");
+    setTimeout(() => {
+      shareResultBtn.textContent = "結果をシェア";
+      shareResultBtn.classList.remove("copied");
+    }, 1800);
+  }
+
+  async function shareResult() {
+    const tier = Math.floor(sessionMaxChain / 10);
+    const badge = tier >= 4 ? " 🌈" : tier === 3 ? " 💎" : tier === 2 ? " 🥇" : tier === 1 ? " 🥈" : "";
+    const shareUrl = "https://kawata2271.github.io/puchi-chain/";
+    const summary = `PUCHI CHAIN\n深度 ${depthMeters}m / スコア ${score}pt / 最大 ${sessionMaxChain} CHAIN${badge}`;
+    const text = `${summary}\n${shareUrl}`;
+
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: "PUCHI CHAIN",
+          text: summary,
+          url: shareUrl
+        });
+        return;
+      } catch (err) {
+        // ユーザーが共有シートを閉じた場合はコピーへフォールバックしない
+        if (err && err.name === "AbortError") return;
+      }
+    }
+
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(text);
+        showCopiedFeedback();
+        return;
+      }
+    } catch (_) {}
+
+    // 古いブラウザ向けフォールバックコピー
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+      showCopiedFeedback();
+    } catch (_) {}
+    document.body.removeChild(ta);
+  }
+
+  shareResultBtn.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+  });
+
+  shareResultBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    shareResult();
   });
 
   // ニックネーム入力モーダルを開く
@@ -2927,6 +2990,8 @@
   tuningToggleBtn.addEventListener("click", () => {
     const isHidden = tuningPanel.classList.toggle("hidden");
     tuningToggleBtn.classList.toggle("active", !isHidden);
+    tuningToggleBtn.setAttribute("aria-expanded", String(!isHidden));
+    tuningToggleBtn.textContent = isHidden ? "開発・調整ツール ▾" : "開発・調整ツール ▴";
   });
 
   function syncSlidersUI() {

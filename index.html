@@ -4,6 +4,24 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>PUCHI CHAIN</title>
+  <meta name="description" content="泡を押し込んで連鎖でぶち抜く、スマホでパッと遊べる物理プチプチ掘削アクション。10連鎖ごとに音と画面の輝きが進化する。" />
+  <meta name="theme-color" content="#0c131c" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+  <!-- LINE・X（Twitter）・Discord などで綺麗に表示されるOGP設定 -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="PUCHI CHAIN" />
+  <meta property="og:title" content="PUCHI CHAIN — 泡を押し込んで連鎖で掘るプチプチアクション" />
+  <meta property="og:description" content="小さい泡を押して隣を膨らませ、2連鎖以上で一気にぶち抜くミニマルな物理パズルアクション。オンライン順位表で競おう。" />
+  <meta property="og:url" content="https://kawata2271.github.io/puchi-chain/" />
+  <meta property="og:image" content="https://kawata2271.github.io/puchi-chain/ogp.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="PUCHI CHAIN" />
+  <meta name="twitter:description" content="泡を押し込んで連鎖でぶち抜く、スマホでパッと遊べる物理プチプチ掘削アクション。" />
+  <meta name="twitter:image" content="https://kawata2271.github.io/puchi-chain/ogp.png" />
+
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -25,18 +43,13 @@
         </div>
       </div>
 
+      <!-- 表に出すボタンは「順位」と「音」だけに絞り、市販アプリ風の佇まいにする -->
       <div class="controls">
         <button class="icon-btn" id="rankingBtn" type="button" title="オンライン順位表を見る">
           順位
         </button>
-        <button class="icon-btn" id="protoToggleBtn" type="button" title="灰色プロトタイプモード切替">
-          プロト
-        </button>
         <button class="icon-btn" id="soundToggleBtn" type="button" title="効果音切替">
           音 ON
-        </button>
-        <button class="icon-btn" id="tuningToggleBtn" type="button" title="パラメータ調整を開く">
-          調整
         </button>
       </div>
     </header>
@@ -72,7 +85,10 @@
             <div class="overlay-rank" id="finalRank"></div>
             <div class="overlay-actions">
               <button class="retry-btn" id="retryBtn" type="button">もう一回</button>
+            </div>
+            <div class="overlay-sub-actions">
               <button class="sub-action-btn" id="openRankingFromResultBtn" type="button">順位を見る</button>
+              <button class="sub-action-btn" id="shareResultBtn" type="button">結果をシェア</button>
             </div>
           </div>
         </div>
@@ -128,12 +144,22 @@
       <p class="hint" id="hintText">小さい泡を押して隣を白く育て、2連鎖以上でペチャンコ玉ごと吹っ飛ばせ。押し込みすぎると暴発して赤ラインが迫る。</p>
     </main>
 
-    <!-- ステップ4検証用：パラメータ調整パネル（デフォルト非表示） -->
-    <aside class="tuning-panel hidden" id="tuningPanel" aria-label="パラメータ調整">
-      <div class="tuning-header">
-        <span>パラメータ調整</span>
-        <button class="text-btn" id="resetParamsBtn" type="button">初期値に戻す</button>
-      </div>
+    <!-- 開発・検証ツール（初見プレイヤーが誤タップしないよう最下部に小さく格納） -->
+    <footer class="dev-footer">
+      <button class="dev-toggle-link" id="tuningToggleBtn" type="button" aria-expanded="false">
+        開発・調整ツール ▾
+      </button>
+
+      <aside class="tuning-panel hidden" id="tuningPanel" aria-label="パラメータ調整">
+        <div class="tuning-header">
+          <span>開発・検証ツール</span>
+          <div class="tuning-header-actions">
+            <button class="icon-btn" id="protoToggleBtn" type="button" title="灰色プロトタイプモード切替">
+              灰色プロトタイプ
+            </button>
+            <button class="text-btn" id="resetParamsBtn" type="button">初期値に戻す</button>
+          </div>
+        </div>
 
       <div class="tuning-grid">
         <label class="param-row">
@@ -177,6 +203,7 @@
         </label>
       </div>
     </aside>
+    </footer>
   </div>
 
   <script src="audio.js"></script>
