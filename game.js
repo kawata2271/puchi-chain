@@ -110,6 +110,10 @@
   const retryBtn = document.getElementById("retryBtn");
   const openRankingFromResultBtn = document.getElementById("openRankingFromResultBtn");
   const shareResultBtn = document.getElementById("shareResultBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const pauseOverlay = document.getElementById("pauseOverlay");
+  const resumeBtn = document.getElementById("resumeBtn");
+  const restartFromPauseBtn = document.getElementById("restartFromPauseBtn");
   const rankingBtn = document.getElementById("rankingBtn");
   const helpBtn = document.getElementById("helpBtn");
   const protoToggleBtn = document.getElementById("protoToggleBtn");
@@ -187,6 +191,7 @@
   let soundUserEnabled = true;
 
   let gameState = "ready"; // 'ready' | 'playing' | 'gameover'
+  let isPaused = false;
   let elapsed = 0;
   let score = 0;
   let depthMeters = 0;
@@ -327,6 +332,34 @@
         navigator.vibrate(pattern);
       } catch (_) {}
     }
+  }
+
+  // 一時停止ボタンとオーバーレイの表示状態を同期する
+  function syncPauseUI() {
+    const canPause = gameState === "playing";
+    if (!canPause && isPaused) {
+      isPaused = false;
+    }
+    pauseBtn.disabled = !canPause;
+    pauseBtn.textContent = isPaused ? "再開" : "一時停止";
+    pauseBtn.classList.toggle("active", isPaused);
+    pauseOverlay.classList.toggle("hidden", !isPaused);
+  }
+
+  // プレイを一時停止する
+  function pauseGame() {
+    if (gameState !== "playing" || isPaused) return;
+    clearPressState();
+    isPaused = true;
+    syncPauseUI();
+  }
+
+  // 一時停止から再開する
+  function resumeGame() {
+    if (!isPaused) return;
+    isPaused = false;
+    lastTime = performance.now();
+    syncPauseUI();
   }
 
   // 押し込み状態をリセットする
@@ -477,6 +510,7 @@
     }
 
     gameState = "ready";
+    isPaused = false;
     elapsed = 0;
     score = 0;
     depthMeters = 0;
@@ -561,6 +595,7 @@
     layerBannerEl.classList.add("hidden");
     gameOverOverlay.classList.add("hidden");
     hintTextEl.classList.remove("hidden-soft");
+    syncPauseUI();
     updateHud(false, false);
   }
 
@@ -815,6 +850,8 @@
       return;
     }
 
+    if (isPaused) return;
+
     // プレイ中に光るコア自身をタップしたときは、通路の中央／空き方向へ軽く揺すって引っかかりを外す
     if (gameState === "playing" && Math.hypot(wx - core.x, wy - core.y) <= core.radius + 10) {
       const walls = getWallBounds(core.y + 24);
@@ -863,6 +900,7 @@
       if (gameState === "ready") {
         gameState = "playing";
         hintTextEl.classList.add("hidden-soft");
+        syncPauseUI();
       }
       const groupSize = getConnectedCriticalGroup(b).size;
       const chainId = nextChainId++;
@@ -905,6 +943,7 @@
     if (gameState === "ready") {
       gameState = "playing";
       hintTextEl.classList.add("hidden-soft");
+      syncPauseUI();
     }
     triggerHaptic(12);
     squeezeGrowingBubble(b);
@@ -1232,6 +1271,8 @@
   function triggerGameOver(reason, worldX, worldY) {
     clearPressState();
     gameState = "gameover";
+    isPaused = false;
+    syncPauseUI();
     pendingPops = [];
     activeChains.clear();
     comboCount = 0;
@@ -1584,8 +1625,8 @@
 
   // フレームごとの状態更新
   function update(dt) {
-    // ニックネーム入力や順位表を開いているあいだは安全に一時停止する
-    if (isModalOpen()) return;
+    // モーダル表示中または一時停止中は物理・タイマーを完全停止する
+    if (isModalOpen() || isPaused) return;
 
     if (pressedBubble && (pressedBubble.dead || pressedBubble.armored || pressedBubble.state !== "growing" || pressedBubble.chainQueued)) {
       clearPressState();
@@ -3040,6 +3081,42 @@
     });
   }
 
+  pauseBtn.addEventListener("click", () => {
+    if (isPaused) {
+      resumeGame();
+    } else {
+      pauseGame();
+    }
+  });
+
+  pauseOverlay.addEventListener("pointerdown", (e) => {
+    if (e.target && e.target.closest("#restartFromPauseBtn")) return;
+    e.preventDefault();
+    resumeGame();
+  });
+
+  resumeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    resumeGame();
+  });
+
+  restartFromPauseBtn.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+  });
+
+  restartFromPauseBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    isPaused = false;
+    resetGame();
+  });
+
+  // プレイ中に別アプリや別タブへ切り替えたときは自動で一時停止して不意のゲームオーバーを防ぐ
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && gameState === "playing" && !isModalOpen()) {
+      pauseGame();
+    }
+  });
+
   rankingBtn.addEventListener("click", () => {
     openRankingModal();
   });
@@ -3083,8 +3160,19 @@
       }
       return;
     }
+    if (e.key === "p" || e.key === "P" || e.key === "Escape") {
+      if (gameState === "playing") {
+        e.preventDefault();
+        if (isPaused) resumeGame();
+        else pauseGame();
+      }
+      return;
+    }
     if (e.code === "Space" || e.code === "Enter") {
-      if (gameState === "gameover" && performance.now() >= gameOverLockUntil) {
+      if (isPaused) {
+        e.preventDefault();
+        resumeGame();
+      } else if (gameState === "gameover" && performance.now() >= gameOverLockUntil) {
         e.preventDefault();
         sound.unlock();
         resetGame();

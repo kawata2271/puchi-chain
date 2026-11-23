@@ -43,8 +43,11 @@
         </div>
       </div>
 
-      <!-- 表に出すボタンは「順位」「遊び方」「音」だけに絞り、市販アプリ風の佇まいにする -->
+      <!-- 表に出すボタンは最小限に絞り、市販アプリ風の佇まいにする -->
       <div class="controls">
+        <button class="icon-btn" id="pauseBtn" type="button" title="一時停止（P）" disabled>
+          一時停止
+        </button>
         <button class="icon-btn" id="rankingBtn" type="button" title="オンライン順位表を見る">
           順位
         </button>
@@ -77,6 +80,19 @@
         <div class="layer-banner hidden" id="layerBanner" aria-live="polite">
           <div class="layer-banner-sub" id="layerBannerSub">DEPTH 30m</div>
           <div class="layer-banner-title" id="layerBannerTitle">EMERALD CANYON</div>
+        </div>
+
+        <!-- 一時停止オーバーレイ（すりガラスで盤面を覆い、再開とやり直しを選べる） -->
+        <div class="overlay pause-overlay hidden" id="pauseOverlay" role="dialog" aria-modal="true" aria-label="一時停止">
+          <div class="overlay-card">
+            <div class="overlay-title pause-title">PAUSED</div>
+            <div class="overlay-actions">
+              <button class="retry-btn" id="resumeBtn" type="button">再開する</button>
+            </div>
+            <div class="overlay-sub-actions">
+              <button class="sub-action-btn" id="restartFromPauseBtn" type="button">最初からやり直す</button>
+            </div>
+          </div>
         </div>
 
         <!-- ゲームオーバー時の最小オーバーレイ（丸く広がる切り替え） -->

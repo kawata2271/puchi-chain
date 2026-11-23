@@ -162,6 +162,31 @@ body.proto-mode .stat-value.bump {
   border-color: var(--btn-active-bg);
 }
 
+.icon-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* 一時停止オーバーレイ（盤面を強めのすりガラスで覆って安心して離席できる） */
+.pause-overlay {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  clip-path: none;
+  z-index: 5;
+}
+
+.pause-overlay.hidden {
+  clip-path: none;
+}
+
+.pause-title {
+  color: var(--theme-accent);
+  font-size: 16px;
+  letter-spacing: 0.28em;
+  margin-bottom: 6px;
+}
+
 /* 縦長掘削ステージ */
 .stage-wrap {
   display: flex;
